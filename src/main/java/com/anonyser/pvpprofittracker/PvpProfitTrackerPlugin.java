@@ -29,6 +29,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
+import net.runelite.api.SkullIcon;
 import net.runelite.api.Varbits;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ActorDeath;
@@ -208,6 +209,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// unless it's the death tick wiping the inventory (that loss is booked as the death).
 	private int lastConsumeTick = -10;
 	private int lastDeathTick = -10;
+
+	private int lastSkullIcon = -2; // last seen skull-slot icon, only for capture logging
 
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
@@ -1187,6 +1190,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */
 	private void updateRisk()
 	{
+		final Player me = client.getLocalPlayer();
+		final int icon = me == null ? -1 : me.getSkullIcon();
+		if (icon != lastSkullIcon)
+		{
+			lastSkullIcon = icon;
+			capture("skull icon -> " + icon
+				+ " (risk treats as " + (isSkullIconSkulled(icon) ? "skulled" : "unskulled") + ")");
+		}
 		final long newRisk = computeRisk();
 		if (newRisk != riskGp)
 		{
@@ -1249,7 +1260,31 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private boolean isSkulled()
 	{
 		final Player me = client.getLocalPlayer();
-		return me != null && me.getSkullIcon() != -1;
+		return me != null && isSkullIconSkulled(me.getSkullIcon());
+	}
+
+	/**
+	 * Only a genuine PK skull means "keep nothing on death". The skull-icon slot is also used
+	 * for loot-key counts, the high-risk-world marker and the fight-pit skull — none of which
+	 * change what you keep.
+	 */
+	private static boolean isSkullIconSkulled(int icon)
+	{
+		switch (icon)
+		{
+			case SkullIcon.SKULL:
+			case SkullIcon.FORINTHRY_SURGE:
+			case SkullIcon.SKULL_DEADMAN:
+			case SkullIcon.FORINTHRY_SURGE_DEADMAN:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_ONE:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_TWO:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_THREE:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_FOUR:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_FIVE:
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	/**
