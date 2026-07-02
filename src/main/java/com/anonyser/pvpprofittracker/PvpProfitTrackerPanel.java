@@ -111,24 +111,24 @@ class PvpProfitTrackerPanel extends PluginPanel
 				"Added to profit — this message disappears in a few seconds."));
 			flashTick.restart();
 		}
-		if (config.showSessionCrates())
-		{
-			crates.add(row("Session", String.valueOf(session.crates), null, MODES_TIP));
-		}
 		if (config.showBaselineCrates())
 		{
 			crates.add(row("Baseline", String.valueOf(baseline.crates), null, MODES_TIP));
 		}
+		if (config.showSessionCrates())
+		{
+			crates.add(row("Session", String.valueOf(session.crates), null, MODES_TIP));
+		}
 		addIfUsed(crates);
 
 		final JPanel points = titled("Bounty Hunter points");
-		if (config.showSessionPoints())
-		{
-			points.add(row("Session", String.valueOf(session.points), null, MODES_TIP));
-		}
 		if (config.showBaselinePoints())
 		{
 			points.add(row("Baseline", String.valueOf(baseline.points), null, MODES_TIP));
+		}
+		if (config.showSessionPoints())
+		{
+			points.add(row("Session", String.valueOf(session.points), null, MODES_TIP));
 		}
 		addIfUsed(points);
 

@@ -77,6 +77,22 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		{
 			addLine("Net worth", plugin.netWorthDisplay(), null);
 		}
+		if (config.showBaselineCrates())
+		{
+			addLine("Crates (baseline)", Long.toString(plugin.getBaseline().crates), null);
+		}
+		if (config.showSessionCrates())
+		{
+			addLine("Crates (session)", Long.toString(plugin.getSession().crates), null);
+		}
+		if (config.showBaselinePoints())
+		{
+			addLine("Points (baseline)", Long.toString(plugin.getBaseline().points), null);
+		}
+		if (config.showSessionPoints())
+		{
+			addLine("Points (session)", Long.toString(plugin.getSession().points), null);
+		}
 
 		return super.render(graphics);
 	}
