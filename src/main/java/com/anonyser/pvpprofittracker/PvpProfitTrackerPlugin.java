@@ -434,7 +434,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		try
 		{
-			return Math.max(0, (long) itemManager.getItemComposition(id).getPrice() * 3L / 5L);
+			return Math.max(0, itemManager.getItemComposition(id).getHaPrice());
 		}
 		catch (RuntimeException e)
 		{
