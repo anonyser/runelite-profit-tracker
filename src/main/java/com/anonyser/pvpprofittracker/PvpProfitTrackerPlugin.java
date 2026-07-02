@@ -399,10 +399,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		updateRisk();
 	}
 
-	/**
-	 * Sum the GE value of a container. {@link ItemManager#getItemPrice} is variation-aware, so ornamented
-	 * and Bounty Hunter corrupted items are priced at their real base value, not the untradeable shell.
-	 */
+	/** Wealth value of a container (for net worth / gains): GE for tradeables, high-alch for untradeables. */
 	private long value(ItemContainer container)
 	{
 		if (container == null)
@@ -418,9 +415,31 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				continue;
 			}
-			total += (long) itemManager.getItemPrice(itemId) * qty;
+			total += wealthValue(itemId) * qty;
 		}
 		return total;
+	}
+
+	/**
+	 * Per-item wealth value: GE price (variation-aware, so ornamented/BH-corrupted items price at their
+	 * real base), or the high-alch value (store value × 0.6) for untradeables — matching Dude, Where's My
+	 * Stuff. This is a net-worth figure; the death/risk value is separate (see deathValue).
+	 */
+	private long wealthValue(int id)
+	{
+		final long ge = itemManager.getItemPrice(id);
+		if (ge > 0)
+		{
+			return ge;
+		}
+		try
+		{
+			return Math.max(0, (long) itemManager.getItemComposition(id).getPrice() * 3L / 5L);
+		}
+		catch (RuntimeException e)
+		{
+			return 0;
+		}
 	}
 
 	/** Displayed risk: our live, real-state estimate plus the calibration learned from the death screen. */
