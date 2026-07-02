@@ -57,7 +57,7 @@ import org.slf4j.LoggerFactory;
 @PluginDescriptor(
 	name = "PvP Profit Tracker",
 	description = "Tracks real PvP profit — loot-key gains minus what you lose on death and consumables — "
-		+ "with K/D, risk and net worth",
+		+ "with K/D, risk and net worth. Details and baseline resets on the side panel ($ icon)",
 	tags = {"pvp", "profit", "loot", "kill", "death", "wilderness", "bounty", "risk"}
 )
 public class PvpProfitTrackerPlugin extends Plugin

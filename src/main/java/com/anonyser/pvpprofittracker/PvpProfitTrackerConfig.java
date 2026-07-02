@@ -13,7 +13,8 @@ public interface PvpProfitTrackerConfig extends Config
 
 	// Shared explainer for the three tracking modes, shown on every tracker toggle.
 	String MODES = " — Actual: your true in-game value. Session: this session only, resets on restart. "
-		+ "Baseline: long-term tally that keeps saving across sessions until you reset it.";
+		+ "Baseline: long-term tally that keeps saving across sessions until you reset it. "
+		+ "Reset buttons live on the plugin's side panel (the green $ icon in the sidebar).";
 
 	@ConfigSection(
 		name = "Display",
@@ -24,7 +25,8 @@ public interface PvpProfitTrackerConfig extends Config
 
 	@ConfigSection(
 		name = "Trackers",
-		description = "Which values are shown." + MODES,
+		description = "Which values are shown. Live details and the baseline reset buttons are on the "
+			+ "plugin's side panel — the green $ icon in the sidebar." + MODES,
 		position = 1
 	)
 	String trackersSection = "trackers";
