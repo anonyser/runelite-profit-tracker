@@ -105,6 +105,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// Live, display-only derived values.
 	private long riskGp;
+	private long gameRiskGp = -1; // the game's exact "Guide risk value" once read from the death screen
 	private long netWorthGp;
 	private long bankValueGp;
 
@@ -225,6 +226,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick e)
 	{
+		readGameRisk();
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
@@ -394,8 +396,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final long inv = value(client.getItemContainer(InventoryID.INV));
 		final long worn = value(client.getItemContainer(InventoryID.WORN));
 		netWorthGp = bankValueGp + inv + worn;
-		riskGp = computeRisk();
-		updatePanel();
+		updateRisk();
 	}
 
 	/**
@@ -422,12 +423,73 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
+	/** Displayed risk: the game's exact "Guide risk value" once we've read it, else our own estimate. */
+	private void updateRisk()
+	{
+		riskGp = gameRiskGp >= 0 ? gameRiskGp : estimateRisk();
+		updatePanel();
+	}
+
 	/**
-	 * Value you'd actually lose if you died right now: everything carried minus the items kept on death.
-	 * You keep your 3 most valuable items (4 with Protect Item), or 0 when skulled (1 with Protect Item).
-	 * Ranking is by per-item price; a kept stack is protected in full.
+	 * While the Items Kept on Death interface is open it shows a "Guide risk value" — the game's exact
+	 * amount you'd lose, correctly pricing untradeables. Read it (it updates live while open) and use it.
 	 */
-	private long computeRisk()
+	private void readGameRisk()
+	{
+		for (int child = 0; child < 40; child++)
+		{
+			final Widget w = client.getWidget(InterfaceID.DEATHKEEP, child);
+			Long v = parseGuideRisk(w);
+			if (v == null && w != null && w.getStaticChildren() != null)
+			{
+				for (final Widget k : w.getStaticChildren())
+				{
+					v = parseGuideRisk(k);
+					if (v != null)
+					{
+						break;
+					}
+				}
+			}
+			if (v != null)
+			{
+				if (v != gameRiskGp)
+				{
+					gameRiskGp = v;
+					updateRisk();
+				}
+				return;
+			}
+		}
+	}
+
+	private Long parseGuideRisk(Widget w)
+	{
+		if (w == null || w.getText() == null || !w.getText().toLowerCase().contains("guide risk value"))
+		{
+			return null;
+		}
+		final String digits = w.getText().replaceAll("[^0-9]", "");
+		if (digits.isEmpty())
+		{
+			return null;
+		}
+		try
+		{
+			return Long.parseLong(digits);
+		}
+		catch (NumberFormatException e)
+		{
+			return null;
+		}
+	}
+
+	/**
+	 * Fallback estimate before the game's value has been read: everything carried minus the items kept on
+	 * death (3 / 4 with Protect Item / 0 skulled / 1 skulled+Protect Item), pricing untradeables at store
+	 * value. Approximate — the game's own "Guide risk value" is exact.
+	 */
+	private long estimateRisk()
 	{
 		final List<long[]> items = new ArrayList<>(); // [perItemDeathValue, stackValue, itemId]
 		long total = 0;
