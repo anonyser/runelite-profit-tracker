@@ -255,18 +255,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 				}
 			}
 		}
-		for (int child = 0; child < 60; child++)
+		for (int child = 0; child < 80; child++)
 		{
-			final Widget w = client.getWidget(InterfaceID.DEATHKEEP, child);
-			logWidgetText(String.valueOf(child), w);
-			if (w != null && w.getDynamicChildren() != null)
-			{
-				final Widget[] dyn = w.getDynamicChildren();
-				for (int i = 0; i < dyn.length; i++)
-				{
-					logWidgetText(child + "." + i, dyn[i]);
-				}
-			}
+			dumpWidget(client.getWidget(InterfaceID.DEATHKEEP, child), String.valueOf(child), 0);
 		}
 		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
 		{
@@ -287,16 +278,29 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
-	private void logWidgetText(String tag, Widget w)
+	private void dumpWidget(Widget w, String tag, int depth)
 	{
-		if (w == null)
+		if (w == null || depth > 4)
 		{
 			return;
 		}
 		final String t = w.getText();
-		if (t != null && !t.trim().isEmpty())
+		final int itemId = w.getItemId();
+		if ((t != null && !t.trim().isEmpty()) || itemId > 0)
 		{
-			capture("widget[" + tag + "] text=\"" + t.replaceAll("<[^>]*>", "") + "\"");
+			final String text = t == null ? "" : t.replaceAll("<[^>]*>", "").trim();
+			capture("widget[" + tag + "] text=\"" + text + "\""
+				+ (itemId > 0 ? " itemId=" + itemId + " qty=" + w.getItemQuantity() + " name=" + itemName(itemId) : ""));
+		}
+		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
+		{
+			if (kids != null)
+			{
+				for (int i = 0; i < kids.length; i++)
+				{
+					dumpWidget(kids[i], tag + "." + i, depth + 1);
+				}
+			}
 		}
 	}
 
@@ -414,7 +418,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private long computeRisk()
 	{
-		final List<long[]> items = new ArrayList<>(); // [perItemPrice, stackValue]
+		final List<long[]> items = new ArrayList<>(); // [perItemDeathValue, stackValue, itemId]
 		long total = 0;
 		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
 		{
@@ -431,26 +435,28 @@ public class PvpProfitTrackerPlugin extends Plugin
 				{
 					continue;
 				}
-				final long per = itemManager.getItemPrice(id);
+				final long per = deathValue(id);
 				if (per <= 0)
 				{
-					continue; // untradeable / no price — treated as no risk for now
+					continue;
 				}
 				final long stack = per * qty;
 				total += stack;
-				items.add(new long[]{per, stack});
+				items.add(new long[]{per, stack, id});
 			}
 		}
 		items.sort((a, b) -> Long.compare(b[0], a[0]));
 		final int kept = keptCount();
 		long protectedValue = 0;
+		final StringBuilder keptItems = new StringBuilder();
 		for (int i = 0; i < items.size() && i < kept; i++)
 		{
 			protectedValue += items.get(i)[1];
+			keptItems.append(itemName((int) items.get(i)[2])).append('(').append(items.get(i)[1]).append(") ");
 		}
 		final long risk = Math.max(0, total - protectedValue);
-		capture("risk skullIcon=" + skullIcon() + " protectItem=" + client.isPrayerActive(Prayer.PROTECT_ITEM)
-			+ " kept=" + kept + " total=" + total + " risk=" + risk);
+		capture("risk skull=" + isSkulled() + " prot=" + client.isPrayerActive(Prayer.PROTECT_ITEM)
+			+ " kept=" + kept + " total=" + total + " risk=" + risk + " keptItems=[" + keptItems.toString().trim() + "]");
 		return risk;
 	}
 
@@ -469,6 +475,24 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private boolean isSkulled()
 	{
 		return skullIcon() != -1;
+	}
+
+	/** Per-item value the game uses on death: GE price if tradeable, else the item's store value. */
+	private long deathValue(int id)
+	{
+		final long ge = itemManager.getItemPrice(id);
+		if (ge > 0)
+		{
+			return ge;
+		}
+		try
+		{
+			return Math.max(0, itemManager.getItemComposition(id).getPrice());
+		}
+		catch (RuntimeException e)
+		{
+			return 0;
+		}
 	}
 
 	// --- Persistence (per RuneScape profile) ---
