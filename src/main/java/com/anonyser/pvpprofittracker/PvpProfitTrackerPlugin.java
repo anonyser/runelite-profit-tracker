@@ -1,5 +1,6 @@
 package com.anonyser.pvpprofittracker;
 
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.Color;
 import java.awt.Font;
@@ -67,9 +68,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_BASELINE = "baseline";
 	private static final String K_ACTUAL = "actual";
 	private static final String K_NET_WORTH = "netWorth";
-	// Pre-rename keys ("tracked" became baseline, "overall" became actual) — read once, then migrated.
-	private static final String K_LEGACY_TRACKED = "tracked";
-	private static final String K_LEGACY_OVERALL = "overall";
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
@@ -113,6 +111,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Inject
 	private PvpProfitTrackerConfig config;
 
+	@Inject
+	private Gson gson;
+
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
 	private final Map<String, Long> repairCosts = new HashMap<>();
 
@@ -127,7 +128,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private final Stats baseline = new Stats();
 	private final Stats actual = new Stats();
 	private Instant sessionStart;
-	private boolean loaded;
+	private String loadedProfileKey; // RS profile whose tallies are live; null until first load
 
 	// Live, display-only derived values.
 	private long riskGp;
@@ -173,11 +174,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			.build();
 		clientToolbar.addNavigation(navButton);
 
-		// If enabled while already logged in, load this profile's saved tallies now.
-		if (client.getGameState() == GameState.LOGGED_IN)
-		{
-			load();
-		}
+		// If enabled while already logged in, load this profile's saved tallies now (self-guarded).
+		load();
 	}
 
 	@Override
@@ -196,7 +194,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		bhPointsSynced = false;
 		bankInterfaceOpen = false;
 		bankOpenedThisLogin = false;
-		loaded = false;
+		loadedProfileKey = null;
 	}
 
 	@Subscribe
@@ -208,6 +206,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			inventorySynced = false;
 			bankOpenedThisLogin = false;
 			bankInterfaceOpen = false;
+		}
+		else if (e.getGameState() == GameState.LOGGED_IN)
+		{
+			// The profile-changed event can fire before the state reaches LOGGED_IN — load from
+			// whichever happens last so the tallies always arm (self-guarded against re-loads).
+			load();
 		}
 	}
 
@@ -745,7 +749,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			netWorthGp = bankValueGp + inv + worn;
 			lastRecordedNetWorth = netWorthGp;
-			if (loaded)
+			if (profileReady())
 			{
 				configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_NET_WORTH, netWorthGp);
 			}
@@ -932,37 +936,52 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private void load()
 	{
-		if (client.getGameState() != GameState.LOGGED_IN)
+		final String profile = configManager.getRSProfileKey();
+		if (profile == null || profile.equals(loadedProfileKey))
 		{
-			return; // no active profile (e.g. on the login screen) — don't overwrite in-memory state
+			return; // no profile known yet, or this profile's tallies are already live — don't clobber them
 		}
-		Stats b = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BASELINE, Stats.class);
-		if (b == null)
-		{
-			b = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_LEGACY_TRACKED, Stats.class);
-		}
-		baseline.copyFrom(b);
-		Stats a = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ACTUAL, Stats.class);
-		if (a == null)
-		{
-			a = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_LEGACY_OVERALL, Stats.class);
-		}
-		actual.copyFrom(a);
+		baseline.copyFrom(readStats(K_BASELINE));
+		actual.copyFrom(readStats(K_ACTUAL));
 		final String nw = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_NET_WORTH);
 		lastRecordedNetWorth = nw == null ? -1 : parseLong(nw);
-		loaded = true;
-		save(); // re-save immediately so legacy-named tallies migrate to the new keys
+		loadedProfileKey = profile;
 		updatePanel();
+	}
+
+	private Stats readStats(String key)
+	{
+		final String json = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, key);
+		if (json == null || json.isEmpty())
+		{
+			return null;
+		}
+		try
+		{
+			return gson.fromJson(json, Stats.class);
+		}
+		catch (RuntimeException e)
+		{
+			log.warn("Could not parse saved '{}' tallies", key, e);
+			return null;
+		}
+	}
+
+	/** True once this profile's tallies are loaded and the same profile is still active. */
+	private boolean profileReady()
+	{
+		return loadedProfileKey != null && loadedProfileKey.equals(configManager.getRSProfileKey());
 	}
 
 	private void save()
 	{
-		if (!loaded)
+		if (!profileReady())
 		{
-			return; // avoid persisting defaults before we've loaded the profile's real tallies
+			return; // never loaded (don't persist defaults) or the profile changed — don't write to the wrong one
 		}
-		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BASELINE, baseline);
-		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ACTUAL, actual);
+		// Stored as explicit JSON — ConfigManager round-trips strings reliably; arbitrary objects it does not.
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BASELINE, gson.toJson(baseline));
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ACTUAL, gson.toJson(actual));
 	}
 
 	private static long parseLong(String s)
