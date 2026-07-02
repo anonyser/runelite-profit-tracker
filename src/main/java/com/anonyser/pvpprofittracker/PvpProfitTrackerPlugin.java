@@ -10,12 +10,15 @@ import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
+import net.runelite.api.Prayer;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
@@ -296,8 +299,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final long inv = value(client.getItemContainer(InventoryID.INV));
 		final long worn = value(client.getItemContainer(InventoryID.WORN));
 		netWorthGp = bankValueGp + inv + worn;
-		// v0.1: risk = everything currently carried. Kept-on-death rules refine this after capture.
-		riskGp = inv + worn;
+		riskGp = computeRisk();
 		updatePanel();
 	}
 
@@ -323,6 +325,73 @@ public class PvpProfitTrackerPlugin extends Plugin
 			total += (long) itemManager.getItemPrice(itemId) * qty;
 		}
 		return total;
+	}
+
+	/**
+	 * Value you'd actually lose if you died right now: everything carried minus the items kept on death.
+	 * You keep your 3 most valuable items (4 with Protect Item), or 0 when skulled (1 with Protect Item).
+	 * Ranking is by per-item price; a kept stack is protected in full.
+	 */
+	private long computeRisk()
+	{
+		final List<long[]> items = new ArrayList<>(); // [perItemPrice, stackValue]
+		long total = 0;
+		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			final ItemContainer c = client.getItemContainer(cid);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
+			{
+				final int id = it.getId();
+				final int qty = it.getQuantity();
+				if (id <= 0 || qty <= 0)
+				{
+					continue;
+				}
+				final long per = itemManager.getItemPrice(id);
+				if (per <= 0)
+				{
+					continue; // untradeable / no price — treated as no risk for now
+				}
+				final long stack = per * qty;
+				total += stack;
+				items.add(new long[]{per, stack});
+			}
+		}
+		items.sort((a, b) -> Long.compare(b[0], a[0]));
+		final int kept = keptCount();
+		long protectedValue = 0;
+		for (int i = 0; i < items.size() && i < kept; i++)
+		{
+			protectedValue += items.get(i)[1];
+		}
+		final long risk = Math.max(0, total - protectedValue);
+		if (config.debugLogging())
+		{
+			log.info("[capture] risk skullIcon={} protectItem={} kept={} total={} risk={}",
+				skullIcon(), client.isPrayerActive(Prayer.PROTECT_ITEM), kept, total, risk);
+		}
+		return risk;
+	}
+
+	private int keptCount()
+	{
+		final int base = isSkulled() ? 0 : 3;
+		return base + (client.isPrayerActive(Prayer.PROTECT_ITEM) ? 1 : 0);
+	}
+
+	private int skullIcon()
+	{
+		final Player me = client.getLocalPlayer();
+		return me == null ? -1 : me.getSkullIcon();
+	}
+
+	private boolean isSkulled()
+	{
+		return skullIcon() != -1;
 	}
 
 	// --- Persistence (per RuneScape profile) ---
