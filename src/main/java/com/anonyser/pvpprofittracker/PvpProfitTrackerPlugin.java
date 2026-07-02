@@ -112,6 +112,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private boolean heldLootKey;
 	private boolean lootKeySynced;
 	private int deathDumpCountdown;
+	private int lootDumpCountdown;
 
 	@Override
 	protected void startUp()
@@ -220,6 +221,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			deathDumpCountdown = 3; // dump a few ticks later, once the game has populated the values
 		}
+		else if (e.getGroupId() == InterfaceID.WILDY_LOOT_CHEST)
+		{
+			lootDumpCountdown = 2;
+		}
 	}
 
 	@Subscribe
@@ -230,6 +235,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
+		}
+		if (lootDumpCountdown > 0 && --lootDumpCountdown == 0)
+		{
+			dumpLootChest();
 		}
 	}
 
@@ -326,6 +335,43 @@ public class PvpProfitTrackerPlugin extends Plugin
 		catch (RuntimeException e)
 		{
 			return "?";
+		}
+	}
+
+	/** Dump the Wilderness Loot Chest contents + value so we can wire realizing the gain on claim. */
+	private void dumpLootChest()
+	{
+		capture("=== WILDERNESS LOOT CHEST ===");
+		long total = 0;
+		for (final int container : LOOT_KEY_CONTAINERS)
+		{
+			final ItemContainer c = client.getItemContainer(container);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
+			{
+				if (it.getId() > 0)
+				{
+					final long v = wealthValue(it.getId()) * it.getQuantity();
+					total += v;
+					capture(String.format("loot(%d): id=%d qty=%d name=%s value=%d",
+						container, it.getId(), it.getQuantity(), itemName(it.getId()), v));
+				}
+			}
+		}
+		capture("loot chest total value = " + total);
+		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
+		if (inv != null)
+		{
+			for (final int key : LOOT_KEYS)
+			{
+				if (inv.contains(key))
+				{
+					capture("holding loot key id=" + key);
+				}
+			}
 		}
 	}
 
