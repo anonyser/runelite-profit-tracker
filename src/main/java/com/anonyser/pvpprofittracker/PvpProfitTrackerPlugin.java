@@ -226,6 +226,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick e)
 	{
+		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
+		updateRisk();
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
@@ -445,8 +447,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/** Displayed risk: our live, real-state estimate plus the calibration learned from the death screen. */
 	private void updateRisk()
 	{
-		riskGp = Math.max(0, estimateRisk() + riskOffset);
-		updatePanel();
+		final long newRisk = Math.max(0, estimateRisk() + riskOffset);
+		if (newRisk != riskGp)
+		{
+			riskGp = newRisk;
+			updatePanel();
+		}
 	}
 
 	/**
@@ -549,16 +555,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		items.sort((a, b) -> Long.compare(b[0], a[0]));
 		final int kept = keptCount();
 		long protectedValue = 0;
-		final StringBuilder keptItems = new StringBuilder();
 		for (int i = 0; i < items.size() && i < kept; i++)
 		{
 			protectedValue += items.get(i)[1];
-			keptItems.append(itemName((int) items.get(i)[2])).append('(').append(items.get(i)[1]).append(") ");
 		}
-		final long risk = Math.max(0, total - protectedValue);
-		capture("risk skull=" + isSkulled() + " prot=" + client.isPrayerActive(Prayer.PROTECT_ITEM)
-			+ " kept=" + kept + " total=" + total + " risk=" + risk + " keptItems=[" + keptItems.toString().trim() + "]");
-		return risk;
+		return Math.max(0, total - protectedValue);
 	}
 
 	private int keptCount()
