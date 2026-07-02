@@ -7,8 +7,12 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,10 +27,11 @@ import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ItemContainerChanged;
-import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.RuneScapeProfileChanged;
@@ -177,10 +182,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			recomputeLiveValues();
 		}
 
-		if (config.debugLogging())
-		{
-			log.info("[capture] ItemContainerChanged id={}", id);
-		}
+		capture("ItemContainerChanged id=" + id);
 	}
 
 	@Subscribe
@@ -194,10 +196,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// v0.1: book the current at-risk value as the loss. The precise kept-on-death engine
 		// (keep top 3 / 4 with Protect Item / 0 when skulled) lands after the in-game capture session.
 		recordDeath(riskGp);
-		if (config.debugLogging())
-		{
-			log.info("[capture] local player death, booked loss {}", riskGp);
-		}
+		capture("local player death, booked loss " + riskGp);
 	}
 
 	// --- Capture helpers: only active with debug logging on, to harvest ids for the in-game session ---
@@ -205,27 +204,111 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onAnimationChanged(AnimationChanged e)
 	{
-		if (config.debugLogging() && e.getActor() == client.getLocalPlayer())
+		if (e.getActor() == client.getLocalPlayer())
 		{
-			log.info("[capture] local player animation={}", e.getActor().getAnimation());
-		}
-	}
-
-	@Subscribe
-	public void onVarbitChanged(VarbitChanged e)
-	{
-		if (config.debugLogging())
-		{
-			log.info("[capture] VarbitChanged varbitId={} value={}", e.getVarbitId(), e.getValue());
+			capture("local player animation=" + e.getActor().getAnimation());
 		}
 	}
 
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded e)
 	{
-		if (config.debugLogging())
+		capture("WidgetLoaded groupId=" + e.getGroupId());
+		if (e.getGroupId() == InterfaceID.DEATHKEEP)
 		{
-			log.info("[capture] WidgetLoaded groupId={}", e.getGroupId());
+			dumpDeathKeep();
+		}
+	}
+
+	/** Append a line to ~/.runelite/pvp-capture.log (and the client log) when debug logging is on. */
+	private void capture(String msg)
+	{
+		if (!config.debugLogging())
+		{
+			return;
+		}
+		log.info("[capture] {}", msg);
+		final File f = new File(System.getProperty("user.home"), ".runelite/pvp-capture.log");
+		try (FileWriter w = new FileWriter(f, true))
+		{
+			w.write(LocalTime.now().withNano(0) + "  " + msg + System.lineSeparator());
+		}
+		catch (IOException ignored)
+		{
+			// best-effort capture logging
+		}
+	}
+
+	/** Dump the game's Items Kept on Death data so Risk can be wired to the exact value it shows. */
+	private void dumpDeathKeep()
+	{
+		capture("=== ITEMS KEPT ON DEATH ===");
+		final ItemContainer kept = client.getItemContainer(InventoryID.DEATHKEEP);
+		if (kept != null)
+		{
+			for (final Item it : kept.getItems())
+			{
+				if (it.getId() > 0)
+				{
+					capture(String.format("kept: id=%d qty=%d name=%s ge=%d",
+						it.getId(), it.getQuantity(), itemName(it.getId()), itemManager.getItemPrice(it.getId())));
+				}
+			}
+		}
+		for (int child = 0; child < 60; child++)
+		{
+			final Widget w = client.getWidget(InterfaceID.DEATHKEEP, child);
+			logWidgetText(String.valueOf(child), w);
+			if (w != null && w.getDynamicChildren() != null)
+			{
+				final Widget[] dyn = w.getDynamicChildren();
+				for (int i = 0; i < dyn.length; i++)
+				{
+					logWidgetText(child + "." + i, dyn[i]);
+				}
+			}
+		}
+		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			final ItemContainer c = client.getItemContainer(cid);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
+			{
+				if (it.getId() > 0)
+				{
+					capture(String.format("carry(%d): id=%d qty=%d name=%s ge=%d storeValue=%d",
+						cid, it.getId(), it.getQuantity(), itemName(it.getId()),
+						itemManager.getItemPrice(it.getId()), itemManager.getItemComposition(it.getId()).getPrice()));
+				}
+			}
+		}
+	}
+
+	private void logWidgetText(String tag, Widget w)
+	{
+		if (w == null)
+		{
+			return;
+		}
+		final String t = w.getText();
+		if (t != null && !t.trim().isEmpty())
+		{
+			capture("widget[" + tag + "] text=\"" + t.replaceAll("<[^>]*>", "") + "\"");
+		}
+	}
+
+	private String itemName(int id)
+	{
+		try
+		{
+			return itemManager.getItemComposition(id).getName();
+		}
+		catch (RuntimeException e)
+		{
+			return "?";
 		}
 	}
 
@@ -256,10 +339,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			final long gp = valueLootKeyContents();
 			recordKill(gp);
-			if (config.debugLogging())
-			{
-				log.info("[capture] loot key received, contents valued {}", gp);
-			}
+			capture("loot key received, contents valued " + gp);
 		}
 		heldLootKey = has;
 	}
@@ -369,11 +449,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			protectedValue += items.get(i)[1];
 		}
 		final long risk = Math.max(0, total - protectedValue);
-		if (config.debugLogging())
-		{
-			log.info("[capture] risk skullIcon={} protectItem={} kept={} total={} risk={}",
-				skullIcon(), client.isPrayerActive(Prayer.PROTECT_ITEM), kept, total, risk);
-		}
+		capture("risk skullIcon=" + skullIcon() + " protectItem=" + client.isPrayerActive(Prayer.PROTECT_ITEM)
+			+ " kept=" + kept + " total=" + total + " risk=" + risk);
 		return risk;
 	}
 
