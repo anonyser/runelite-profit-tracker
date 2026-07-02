@@ -117,22 +117,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Trailing dose marker in potion names, e.g. "Saradomin brew(4)".
 	private static final Pattern DOSES_RE = Pattern.compile("\\((\\d)\\)\\s*$");
 
-	// Chugging barrel (pre-pot device): per-slot dose counts, 4 loadouts x 5 slots. Contents
-	// (which potions) are read from the configure UI; these varbits track the doses live.
-	private static final int[] PREPOT_CAP_VARBITS = {
-		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_1_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_3_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_4_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_1_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_3_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_4_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_1_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_3_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_4_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_1_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_3_CAP,
-		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_4_CAP,
-	};
+	// Drinking from the chugging barrel (confirmed in-game; distinct from the eat/drink 829).
+	private static final int CHUG_ANIMATION = 11645;
 
 	@Inject
 	private Client client;
@@ -195,15 +181,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private boolean bhPointsSynced;
 	private int ticksSinceLogin;
 
-	// Chugging barrel state: potion item id -> doses left (from the configure UI), the stored
-	// value (counted into net worth), and chug detection off the per-slot dose varbits.
+	// Chugging barrel state: the device's contents are a real item container
+	// (PREPOT_DEVICE_INV) — tracked live, valued into net worth, chugs booked off the
+	// chug animation. Persisted per profile so the value survives relogs.
 	private final Map<Integer, Integer> barrelDoses = new HashMap<>();
 	private long barrelGp;
-	private final int[] lastPrepotCaps = new int[PREPOT_CAP_VARBITS.length];
-	private boolean prepotChugPending;
-	private boolean prepotBigChange;
-	private boolean prepotInterfaceOpen;
-	private int prepotScanCountdown;
+	private int lastChugTick = -10;
 
 	// Consumable detection: an inventory drop right after the eat/drink animation is a consume,
 	// unless it's the death tick wiping the inventory (that loss is booked as the death).
@@ -315,6 +298,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			bankOpenedThisLogin = true;
 			recomputeLiveValues();
 		}
+		else if (id == InventoryID.PREPOT_DEVICE_INV)
+		{
+			handleBarrelChanged(e.getItemContainer());
+		}
 
 		capture("ItemContainerChanged id=" + id);
 	}
@@ -339,35 +326,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged e)
 	{
-		// Chugging barrel dose varbits: a slot dropping by exactly one outside the bank/config
-		// UI is a chug; bigger moves are refills or reconfiguration and just trigger a resync.
-		final int slot = prepotCapSlot(e.getVarbitId());
-		if (slot >= 0)
-		{
-			final int prev = lastPrepotCaps[slot];
-			lastPrepotCaps[slot] = e.getValue();
-			if (ticksSinceLogin < 5)
-			{
-				return; // login transmit — sync only
-			}
-			if (bankInterfaceOpen || prepotInterfaceOpen)
-			{
-				prepotScanCountdown = 2; // being reconfigured — re-read contents, never book
-			}
-			else if (e.getValue() < prev)
-			{
-				if (prev - e.getValue() > 1)
-				{
-					prepotBigChange = true;
-				}
-				else
-				{
-					prepotChugPending = true;
-				}
-			}
-			return;
-		}
-
 		// The game keeps the player's Bounty Hunter points in a varp — track its increases so kills,
 		// streak/threshold bonuses and emblem turn-ins all count with the game's own numbers.
 		if (e.getVarbitId() != -1 || e.getVarpId() != VarPlayerID.BH_2023_POINTS)
@@ -427,6 +385,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				lastConsumeTick = client.getTickCount();
 			}
+			else if (e.getActor().getAnimation() == CHUG_ANIMATION)
+			{
+				lastChugTick = client.getTickCount();
+			}
 			capture("local player animation=" + e.getActor().getAnimation());
 		}
 	}
@@ -447,11 +409,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			bankInterfaceOpen = true;
 		}
-		else if (e.getGroupId() == InterfaceID.PREPOT_DEVICE)
-		{
-			prepotInterfaceOpen = true;
-			prepotScanCountdown = 2; // read the barrel's contents once the UI has populated
-		}
 		// Any opened interface might be the Kill Death Ratio window — scan it once its text has loaded.
 		kdScanGroup = e.getGroupId();
 		kdScanCountdown = 2;
@@ -463,10 +420,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (e.getGroupId() == InterfaceID.BANKMAIN)
 		{
 			bankInterfaceOpen = false;
-		}
-		else if (e.getGroupId() == InterfaceID.PREPOT_DEVICE)
-		{
-			prepotInterfaceOpen = false;
 		}
 	}
 
@@ -490,23 +443,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (kdScanCountdown > 0 && --kdScanCountdown == 0)
 		{
 			maybeImportActualKd(kdScanGroup);
-		}
-		if (prepotScanCountdown > 0 && --prepotScanCountdown == 0)
-		{
-			scanBarrelContents();
-		}
-		if (prepotChugPending || prepotBigChange)
-		{
-			if (prepotBigChange)
-			{
-				capture("prepot: dose counts moved by more than one — treating as reconfiguration");
-			}
-			else
-			{
-				bookChug();
-			}
-			prepotChugPending = false;
-			prepotBigChange = false;
 		}
 	}
 
@@ -879,83 +815,49 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// --- Chugging barrel (pre-pot device) ---
 
-	private static int prepotCapSlot(int varbitId)
+	/**
+	 * The device's contents are a real item container. Any change updates the stored value
+	 * (counted into net worth); a value drop right after the chug animation is a chug and
+	 * books as a consumable. Fills and reconfiguration just update the contents.
+	 */
+	private void handleBarrelChanged(ItemContainer c)
 	{
-		for (int i = 0; i < PREPOT_CAP_VARBITS.length; i++)
+		final Map<Integer, Integer> now = new HashMap<>();
+		if (c != null)
 		{
-			if (PREPOT_CAP_VARBITS[i] == varbitId)
+			for (final Item it : c.getItems())
 			{
-				return i;
-			}
-		}
-		return -1;
-	}
-
-	/** Read the barrel's exact contents (potion item + doses) from the open configure UI. */
-	private void scanBarrelContents()
-	{
-		final Widget contents = client.getWidget(InterfaceID.PrepotDevice.DEVICE_CONTENTS);
-		if (contents == null)
-		{
-			return; // UI already closed — the next open re-triggers the scan
-		}
-		final Map<Integer, Integer> found = new HashMap<>();
-		for (final Widget[] kids : new Widget[][]{contents.getDynamicChildren(), contents.getStaticChildren()})
-		{
-			if (kids == null)
-			{
-				continue;
-			}
-			for (final Widget w : kids)
-			{
-				if (w != null && w.getItemId() > 0 && w.getItemQuantity() > 0)
+				if (it.getId() > 0 && it.getQuantity() > 0)
 				{
-					found.merge(w.getItemId(), w.getItemQuantity(), Integer::sum);
-					capture("barrel: id=" + w.getItemId() + " qty=" + w.getItemQuantity()
-						+ " name=" + itemName(w.getItemId()));
+					now.merge(it.getId(), it.getQuantity(), Integer::sum);
+					capture("barrel: id=" + it.getId() + " qty=" + it.getQuantity()
+						+ " name=" + itemName(it.getId()));
 				}
 			}
 		}
+		final long oldGp = barrelGp;
 		barrelDoses.clear();
-		barrelDoses.putAll(found);
+		barrelDoses.putAll(now);
 		recomputeBarrelGp();
 		saveBarrel();
-		recomputeLiveValues();
-		updatePanel();
-		capture("barrel contents synced, stored value " + barrelGp);
-	}
+		capture("barrel value " + oldGp + " -> " + barrelGp);
 
-	/** One chug = one dose of every stored potion: book it as a consumable and shrink the barrel. */
-	private void bookChug()
-	{
-		if (barrelDoses.isEmpty())
+		final long delta = oldGp - barrelGp;
+		if (delta > 0 && client.getTickCount() - lastChugTick <= 1)
 		{
-			capture("chug detected but barrel contents unknown — open the barrel's configure UI once");
-			return;
-		}
-		long value = 0;
-		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
-		{
-			if (en.getValue() > 0)
+			if (inPvpContext())
 			{
-				value += perDoseValue(en.getKey());
-				en.setValue(en.getValue() - 1);
+				session.addConsumed(delta);
+				baseline.addConsumed(delta);
+				save();
+				capture("chugged barrel: " + delta + " gp");
+			}
+			else
+			{
+				capture("chug outside PvP context, not booked (" + delta + " gp)");
 			}
 		}
-		recomputeBarrelGp();
-		saveBarrel();
 		recomputeLiveValues();
-		if (value > 0 && inPvpContext())
-		{
-			session.addConsumed(value);
-			baseline.addConsumed(value);
-			save();
-			capture("chugged barrel: one dose of each, " + value + " gp");
-		}
-		else if (value > 0)
-		{
-			capture("chug outside PvP context, not booked (" + value + " gp)");
-		}
 		updatePanel();
 	}
 
@@ -1269,24 +1171,25 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/**
 	 * Only a genuine PK skull means "keep nothing on death". The skull-icon slot is also used
 	 * for loot-key counts, the high-risk-world marker and the fight-pit skull — none of which
-	 * change what you keep.
+	 * change what you keep. Unknown icon ids (the game adds new combined ones faster than the
+	 * API names them — 30/31 seen in-game while skulled) are treated as skulled, the safer
+	 * direction for a risk estimate.
 	 */
 	private static boolean isSkullIconSkulled(int icon)
 	{
 		switch (icon)
 		{
-			case SkullIcon.SKULL:
-			case SkullIcon.FORINTHRY_SURGE:
-			case SkullIcon.SKULL_DEADMAN:
-			case SkullIcon.FORINTHRY_SURGE_DEADMAN:
-			case SkullIcon.FORINTHRY_SURGE_KEYS_ONE:
-			case SkullIcon.FORINTHRY_SURGE_KEYS_TWO:
-			case SkullIcon.FORINTHRY_SURGE_KEYS_THREE:
-			case SkullIcon.FORINTHRY_SURGE_KEYS_FOUR:
-			case SkullIcon.FORINTHRY_SURGE_KEYS_FIVE:
-				return true;
-			default:
+			case SkullIcon.NONE:
+			case SkullIcon.SKULL_FIGHT_PIT:
+			case SkullIcon.SKULL_HIGH_RISK:
+			case SkullIcon.LOOT_KEYS_ONE:
+			case SkullIcon.LOOT_KEYS_TWO:
+			case SkullIcon.LOOT_KEYS_THREE:
+			case SkullIcon.LOOT_KEYS_FOUR:
+			case SkullIcon.LOOT_KEYS_FIVE:
 				return false;
+			default:
+				return true;
 		}
 	}
 
