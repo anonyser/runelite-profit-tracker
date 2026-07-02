@@ -684,32 +684,30 @@ public class PvpProfitTrackerPlugin extends Plugin
 				capture("received " + tierDelta + " bounty crate(s)");
 			}
 
-			// An open = any crate consumed while items appear. The reward nets off the consumed
-			// crate's own value, so converting a supply crate into food never books its face
-			// value twice, and a crate found inside a crate counts as part of the reward.
+			// An open = any crate consumed while items appear. A crate's face value never books
+			// to profit anywhere — not at receive, not in a loot claim — so booking the full
+			// contents here counts each crate exactly once whether it was earned, bought with
+			// points, or found inside another crate (gained crates book when THEY are opened).
 			boolean crateConsumed = false;
-			long consumedCrateGp = 0;
 			for (final int id : ALL_CRATES)
 			{
-				final int dq = now.getOrDefault(id, 0) - lastInventory.getOrDefault(id, 0);
-				if (dq < 0)
+				if (now.getOrDefault(id, 0) < lastInventory.getOrDefault(id, 0))
 				{
 					crateConsumed = true;
-					consumedCrateGp += wealthValue(id) * -dq;
+					break;
 				}
 			}
 			if (crateConsumed)
 			{
-				long gained = 0;
+				long reward = 0;
 				for (final Map.Entry<Integer, Integer> en : now.entrySet())
 				{
 					final int dq = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
-					if (dq > 0)
+					if (dq > 0 && !isCrate(en.getKey()))
 					{
-						gained += wealthValue(en.getKey()) * dq;
+						reward += wealthValue(en.getKey()) * dq;
 					}
 				}
-				final long reward = gained - consumedCrateGp;
 				if (reward > 0)
 				{
 					session.addCrateValue(reward);
@@ -788,12 +786,36 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return n;
 	}
 
+	private static boolean isCrate(int id)
+	{
+		for (final int c : ALL_CRATES)
+		{
+			if (c == id)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private long valueLootKeyContents()
 	{
 		long total = 0;
 		for (final int container : LOOT_KEY_CONTAINERS)
 		{
-			total += value(client.getItemContainer(container));
+			final ItemContainer c = client.getItemContainer(container);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
+			{
+				// Crates in the chest are skipped — their contents book when they're opened.
+				if (it.getId() > 0 && it.getQuantity() > 0 && !isCrate(it.getId()))
+				{
+					total += wealthValue(it.getId()) * it.getQuantity();
+				}
+			}
 		}
 		return total;
 	}
