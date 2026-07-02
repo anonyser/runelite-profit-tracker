@@ -81,12 +81,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 		InventoryID.DEADMAN_LOOT_INV3, InventoryID.DEADMAN_LOOT_INV4,
 	};
 
-	// Bounty Hunter crates (the current tiered crates plus the older single crate).
+	// Bounty Hunter crates: the tiered crates, the older single crate, and the supply crates.
 	private static final int[] BH_CRATES = {
 		ItemID.BH_CRATE,
 		ItemID.BH_EP_CRATE_2, ItemID.BH_EP_CRATE_3, ItemID.BH_EP_CRATE_4, ItemID.BH_EP_CRATE_5,
 		ItemID.BH_EP_CRATE_6, ItemID.BH_EP_CRATE_7, ItemID.BH_EP_CRATE_8, ItemID.BH_EP_CRATE_9,
 		ItemID.BH_EP_CRATE_10,
+		ItemID.BH_SUPPLY_CRATE, ItemID.BH_SUPPLY_CRATE_MANTA_RAY, ItemID.BH_SUPPLY_CRATE_ANGLERFISH,
 	};
 
 	// The Kill Death Ratio window is matched by its text, not a hardcoded id, so the exact
