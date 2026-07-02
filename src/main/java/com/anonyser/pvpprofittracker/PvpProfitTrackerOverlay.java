@@ -74,11 +74,15 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 
 	private void addLine(String left, String right, Color rightColor)
 	{
-		panelComponent.getChildren().add(LineComponent.builder()
+		// Only set the colour when one is given — passing null overrides the builder's white default.
+		final LineComponent.LineComponentBuilder b = LineComponent.builder()
 			.left(left)
-			.right(right)
-			.rightColor(rightColor)
-			.build());
+			.right(right);
+		if (rightColor != null)
+		{
+			b.rightColor(rightColor);
+		}
+		panelComponent.getChildren().add(b.build());
 	}
 
 	private void addProfitLine(String left, long profit)
