@@ -79,8 +79,16 @@ public class PvpProfitTrackerPlugin extends Plugin
 		InventoryID.DEADMAN_LOOT_INV3, InventoryID.DEADMAN_LOOT_INV4,
 	};
 
-	// Bounty Hunter crates: the tiered crates, the older single crate, and the supply crates.
-	private static final int[] BH_CRATES = {
+	// Tiered Bounty Hunter reward crates (from kills) — these are what the crate counters count.
+	private static final int[] TIER_CRATES = {
+		ItemID.BH_CRATE,
+		ItemID.BH_EP_CRATE_2, ItemID.BH_EP_CRATE_3, ItemID.BH_EP_CRATE_4, ItemID.BH_EP_CRATE_5,
+		ItemID.BH_EP_CRATE_6, ItemID.BH_EP_CRATE_7, ItemID.BH_EP_CRATE_8, ItemID.BH_EP_CRATE_9,
+		ItemID.BH_EP_CRATE_10,
+	};
+	// Every openable BH crate, including the supply crates that drop out of reward crates and
+	// loot — those are valued as loot rather than counted (they aren't kill-crates).
+	private static final int[] ALL_CRATES = {
 		ItemID.BH_CRATE,
 		ItemID.BH_EP_CRATE_2, ItemID.BH_EP_CRATE_3, ItemID.BH_EP_CRATE_4, ItemID.BH_EP_CRATE_5,
 		ItemID.BH_EP_CRATE_6, ItemID.BH_EP_CRATE_7, ItemID.BH_EP_CRATE_8, ItemID.BH_EP_CRATE_9,
@@ -650,26 +658,43 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// crate is not a new crate, and a deposited one was not opened.
 		if (inventorySynced && !bankInterfaceOpen)
 		{
-			final int delta = crateCount(now) - crateCount(lastInventory);
-			if (delta > 0)
+			// Only tiered kill-crates count as received; supply crates are loot, not kill-crates.
+			final int tierDelta = crateCount(now, TIER_CRATES) - crateCount(lastInventory, TIER_CRATES);
+			if (tierDelta > 0)
 			{
-				session.addCrates(delta);
-				baseline.addCrates(delta);
+				session.addCrates(tierDelta);
+				baseline.addCrates(tierDelta);
 				save();
 				updatePanel();
-				capture("received " + delta + " bounty crate(s)");
+				capture("received " + tierDelta + " bounty crate(s)");
 			}
-			else if (delta < 0)
+
+			// An open = any crate consumed while items appear. The reward nets off the consumed
+			// crate's own value, so converting a supply crate into food never books its face
+			// value twice, and a crate found inside a crate counts as part of the reward.
+			boolean crateConsumed = false;
+			long consumedCrateGp = 0;
+			for (final int id : ALL_CRATES)
 			{
-				long reward = 0;
+				final int dq = now.getOrDefault(id, 0) - lastInventory.getOrDefault(id, 0);
+				if (dq < 0)
+				{
+					crateConsumed = true;
+					consumedCrateGp += wealthValue(id) * -dq;
+				}
+			}
+			if (crateConsumed)
+			{
+				long gained = 0;
 				for (final Map.Entry<Integer, Integer> en : now.entrySet())
 				{
-					final int gained = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
-					if (gained > 0 && !isCrate(en.getKey()))
+					final int dq = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
+					if (dq > 0)
 					{
-						reward += wealthValue(en.getKey()) * gained;
+						gained += wealthValue(en.getKey()) * dq;
 					}
 				}
+				final long reward = gained - consumedCrateGp;
 				if (reward > 0)
 				{
 					session.addCrateValue(reward);
@@ -690,26 +715,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 		lastInventory.putAll(now);
 	}
 
-	private static int crateCount(Map<Integer, Integer> inv)
+	private static int crateCount(Map<Integer, Integer> inv, int[] ids)
 	{
 		int n = 0;
-		for (final int id : BH_CRATES)
+		for (final int id : ids)
 		{
 			n += inv.getOrDefault(id, 0);
 		}
 		return n;
-	}
-
-	private static boolean isCrate(int id)
-	{
-		for (final int c : BH_CRATES)
-		{
-			if (c == id)
-			{
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private long valueLootKeyContents()
