@@ -93,6 +93,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Pattern KILLS_RE = Pattern.compile("kills?\\s*:?\\s*([\\d,]+)");
 	private static final Pattern DEATHS_RE = Pattern.compile("deaths?\\s*:?\\s*([\\d,]+)");
 
+	// Whole words only — otherwise "crater", "hitpoints" and "pointless" spam the capture log.
+	private static final Pattern CHAT_CAPTURE_RE =
+		Pattern.compile("\\b(bounty|emblems?|points?|crates?)\\b", Pattern.CASE_INSENSITIVE);
+
 	@Inject
 	private Client client;
 
@@ -307,8 +311,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return;
 		}
-		final String m = e.getMessage().toLowerCase();
-		if (m.contains("bounty") || m.contains("emblem") || m.contains("point") || m.contains("crate"))
+		if (CHAT_CAPTURE_RE.matcher(e.getMessage()).find())
 		{
 			capture("chat[" + e.getType() + "] " + e.getMessage());
 		}

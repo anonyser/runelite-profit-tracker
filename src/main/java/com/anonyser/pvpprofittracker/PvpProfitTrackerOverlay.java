@@ -15,6 +15,8 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
  */
 class PvpProfitTrackerOverlay extends OverlayPanel
 {
+	private static final Color FLASH_COLOR = new Color(255, 200, 60);
+
 	private final PvpProfitTrackerPlugin plugin;
 	private final PvpProfitTrackerConfig config;
 
@@ -37,6 +39,13 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		panelComponent.getChildren().clear();
 		panelComponent.setPreferredSize(new Dimension(185, 0));
 		panelComponent.getChildren().add(TitleComponent.builder().text("PvP Profit").build());
+
+		// Crate reward flash — mirrored here because mid-fight nobody is watching the side panel.
+		if (plugin.crateFlashGp() > 0)
+		{
+			addLine("Crate reward", plugin.fmt(plugin.crateFlashGp())
+				+ " (" + plugin.crateFlashSecondsLeft() + "s)", FLASH_COLOR);
+		}
 
 		if (config.showActualKd())
 		{
