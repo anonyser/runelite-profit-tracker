@@ -39,4 +39,6 @@ tasks.register('runClient', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'com.anonyser.pvpprofittracker.PvpProfitTrackerPluginTest'
     enableAssertions = true
+    maxHeapSize = '4g'      // give the dev client 4 GB of RAM
+    minHeapSize = '512m'
 }
