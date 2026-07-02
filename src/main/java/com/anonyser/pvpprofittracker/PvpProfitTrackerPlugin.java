@@ -28,6 +28,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
+import net.runelite.api.Varbits;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.ChatMessage;
@@ -41,6 +42,7 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarPlayerID;
+import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -105,6 +107,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Pattern CHAT_CAPTURE_RE =
 		Pattern.compile("\\b(bounty|emblems?|points?|crates?)\\b", Pattern.CASE_INSENSITIVE);
 
+	// The eat/drink animation (confirmed in-game against food and potions alike).
+	private static final int CONSUME_ANIMATION = 829;
+
 	@Inject
 	private Client client;
 
@@ -165,6 +170,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int lastBhPoints;
 	private boolean bhPointsSynced;
 	private int ticksSinceLogin;
+
+	// Consumable detection: an inventory drop right after the eat/drink animation is a consume,
+	// unless it's the death tick wiping the inventory (that loss is booked as the death).
+	private int lastConsumeTick = -10;
+	private int lastDeathTick = -10;
 
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
@@ -280,6 +290,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return;
 		}
 		// Book the current at-risk value as the loss — it shows up as negative profit.
+		lastDeathTick = client.getTickCount();
 		recordDeath(riskGp);
 		capture("local player death, booked loss " + riskGp);
 	}
@@ -342,6 +353,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		if (e.getActor() == client.getLocalPlayer())
 		{
+			if (e.getActor().getAnimation() == CONSUME_ANIMATION)
+			{
+				lastConsumeTick = client.getTickCount();
+			}
 			capture("local player animation=" + e.getActor().getAnimation());
 		}
 	}
@@ -706,6 +721,43 @@ public class PvpProfitTrackerPlugin extends Plugin
 					capture("opened bounty crate, reward " + reward);
 				}
 			}
+
+			// Consumables: an inventory drop right after the eat/drink animation, in a PvP
+			// context, books the net value used up as a loss. Dose transitions pair naturally
+			// (brew(4) out, brew(3) in = one dose); a change that nets a gain is not a consume,
+			// and the death-tick inventory wipe is excluded (that loss books as the death).
+			if (client.getTickCount() - lastConsumeTick <= 1
+				&& client.getTickCount() - lastDeathTick > 2
+				&& inPvpContext())
+			{
+				long down = 0;
+				for (final Map.Entry<Integer, Integer> en : lastInventory.entrySet())
+				{
+					final int dq = now.getOrDefault(en.getKey(), 0) - en.getValue();
+					if (dq < 0)
+					{
+						down += wealthValue(en.getKey()) * -dq;
+					}
+				}
+				long up = 0;
+				for (final Map.Entry<Integer, Integer> en : now.entrySet())
+				{
+					final int dq = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
+					if (dq > 0)
+					{
+						up += wealthValue(en.getKey()) * dq;
+					}
+				}
+				final long consumed = down - up;
+				if (consumed > 0)
+				{
+					session.addConsumed(consumed);
+					baseline.addConsumed(consumed);
+					save();
+					updatePanel();
+					capture("consumed " + consumed + " gp of supplies");
+				}
+			}
 		}
 		else
 		{
@@ -713,6 +765,17 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		lastInventory.clear();
 		lastInventory.putAll(now);
+	}
+
+	/** In the Wilderness or on a PvP/BH world — where kills, deaths and consumables count. */
+	private boolean inPvpContext()
+	{
+		if (!config.pvpOnly())
+		{
+			return true;
+		}
+		return client.getVarbitValue(Varbits.IN_WILDERNESS) == 1
+			|| client.getVarbitValue(VarbitID.THIS_IS_A_PVP_OR_BH_WORLD) == 1;
 	}
 
 	private static int crateCount(Map<Integer, Integer> inv, int[] ids)
