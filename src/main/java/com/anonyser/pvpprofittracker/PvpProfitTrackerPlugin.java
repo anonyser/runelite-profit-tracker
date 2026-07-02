@@ -15,7 +15,9 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -70,6 +72,21 @@ public class PvpProfitTrackerPlugin extends Plugin
 		InventoryID.DEADMAN_LOOT_INV0, InventoryID.DEADMAN_LOOT_INV1, InventoryID.DEADMAN_LOOT_INV2,
 		InventoryID.DEADMAN_LOOT_INV3, InventoryID.DEADMAN_LOOT_INV4,
 	};
+
+	/**
+	 * Reclaim-on-death cost for untradeables (what it really costs to get the item back) by item id — the
+	 * game's own death value, which isn't a GE/store price, so we hard-code it. Verified in-game; extend as
+	 * needed. Only affects the risk/death calculation, not net worth.
+	 */
+	private static final Map<Integer, Long> RECLAIM_COST = new HashMap<>();
+
+	static
+	{
+		RECLAIM_COST.put(21295, 225_000L); // Infernal cape
+		RECLAIM_COST.put(12954, 240_000L); // Dragon defender
+		RECLAIM_COST.put(10551, 150_000L); // Fighter torso
+		RECLAIM_COST.put(7462, 100_000L);  // Barrows gloves
+	}
 
 	@Inject
 	private Client client;
@@ -593,13 +610,21 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return me != null && me.getSkullIcon() != -1;
 	}
 
-	/** Per-item value lost on death: GE price if tradeable, else the item's store value. */
+	/**
+	 * Per-item value lost on death: GE price if tradeable, else the untradeable's reclaim cost (from
+	 * {@link #RECLAIM_COST}), else its store value as a fallback.
+	 */
 	private long deathValue(int id)
 	{
 		final long ge = itemManager.getItemPrice(id);
 		if (ge > 0)
 		{
 			return ge;
+		}
+		final Long reclaim = RECLAIM_COST.get(id);
+		if (reclaim != null)
+		{
+			return reclaim;
 		}
 		try
 		{
