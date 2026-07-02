@@ -109,7 +109,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private long bankValueGp;
 
 	// Loot-key edge detection (count a kill on the transition to "holding a key", not on login).
-	private boolean heldLootKey;
+	private int heldLootKeyCount;
 	private boolean lootKeySynced;
 	private long pendingLootValue; // value in the loot chest, snapshotted while open, realized on claim
 	private int deathDumpCountdown;
@@ -146,7 +146,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		overlay = null;
 		panel = null;
 		navButton = null;
-		heldLootKey = false;
+		heldLootKeyCount = 0;
 		lootKeySynced = false;
 		loaded = false;
 	}
@@ -387,38 +387,40 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void detectLootKeyPickup()
 	{
 		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
-		boolean has = false;
+		int count = 0;
 		if (inv != null)
 		{
 			for (final int key : LOOT_KEYS)
 			{
-				if (inv.contains(key))
-				{
-					has = true;
-					break;
-				}
+				count += inv.count(key);
 			}
 		}
 
 		if (!lootKeySynced)
 		{
-			heldLootKey = has;
+			heldLootKeyCount = count;
 			lootKeySynced = true;
 			return;
 		}
 
-		if (has && !heldLootKey)
+		if (count > heldLootKeyCount)
 		{
-			recordKill(); // a kill — the loot value is realized when you claim the chest
-			capture("kill: received loot key");
+			// One kill per new loot key — the loot value is realized when you claim the chest.
+			final int kills = count - heldLootKeyCount;
+			for (int i = 0; i < kills; i++)
+			{
+				recordKill();
+			}
+			capture("kill: +" + kills + " loot key(s), now holding " + count);
 		}
-		else if (!has && heldLootKey && pendingLootValue > 0)
+		else if (count < heldLootKeyCount && pendingLootValue > 0)
 		{
-			recordGain(pendingLootValue); // claimed the chest — realize the loot value once
+			// Claimed loot — realize the snapshotted chest value once, then reset.
+			recordGain(pendingLootValue);
 			capture("claimed loot, realized gain " + pendingLootValue);
 			pendingLootValue = 0;
 		}
-		heldLootKey = has;
+		heldLootKeyCount = count;
 	}
 
 	private long valueLootKeyContents()
