@@ -29,7 +29,6 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.SkullIcon;
-import net.runelite.api.Varbits;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
@@ -960,7 +959,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return true;
 		}
 		final EnumSet<WorldType> world = client.getWorldType();
-		return client.getVarbitValue(Varbits.IN_WILDERNESS) == 1
+		return client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1
 			|| client.getVarbitValue(VarbitID.THIS_IS_A_PVP_OR_BH_WORLD) == 1
 			|| world.contains(WorldType.PVP)
 			|| world.contains(WorldType.BOUNTY);
