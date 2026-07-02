@@ -13,11 +13,12 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -28,13 +29,17 @@ import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -59,10 +64,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Logger log = LoggerFactory.getLogger(PvpProfitTrackerPlugin.class);
 
 	// Persistence keys (stored per RuneScape profile so each account keeps its own tallies).
-	private static final String K_SINCE = "sinceEnabled";
-	private static final String K_TRACKED = "tracked";
-	private static final String K_OVERALL = "overall";
-	private static final String K_ENABLED_AT = "enabledAt";
+	private static final String K_BASELINE = "baseline";
+	private static final String K_ACTUAL = "actual";
+	private static final String K_NET_WORTH = "netWorth";
+	// Pre-rename keys ("tracked" became baseline, "overall" became actual) — read once, then migrated.
+	private static final String K_LEGACY_TRACKED = "tracked";
+	private static final String K_LEGACY_OVERALL = "overall";
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
@@ -74,6 +81,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 		InventoryID.DEADMAN_LOOT_INV3, InventoryID.DEADMAN_LOOT_INV4,
 	};
 
+	// Bounty Hunter crates (the current tiered crates plus the older single crate).
+	private static final int[] BH_CRATES = {
+		ItemID.BH_CRATE,
+		ItemID.BH_EP_CRATE_2, ItemID.BH_EP_CRATE_3, ItemID.BH_EP_CRATE_4, ItemID.BH_EP_CRATE_5,
+		ItemID.BH_EP_CRATE_6, ItemID.BH_EP_CRATE_7, ItemID.BH_EP_CRATE_8, ItemID.BH_EP_CRATE_9,
+		ItemID.BH_EP_CRATE_10,
+	};
+
+	// The Kill Death Ratio window is matched by its text, not a hardcoded id, so the exact
+	// interface doesn't have to be known up front. Kills/deaths are integers; the ratio is not.
+	private static final Pattern KILLS_RE = Pattern.compile("kills?\\s*:?\\s*([\\d,]+)");
+	private static final Pattern DEATHS_RE = Pattern.compile("deaths?\\s*:?\\s*([\\d,]+)");
 
 	@Inject
 	private Client client;
@@ -101,26 +120,41 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private PvpProfitTrackerPanel panel;
 	private NavigationButton navButton;
 
-	// Tracking scopes. session/sinceEnabled/tracked hold full profit; overall is K/D only (Edgeville import).
+	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
+	// player's true in-game K/D (imported at Edgeville, kept counting from there).
 	private final Stats session = new Stats();
-	private final Stats sinceEnabled = new Stats();
-	private final Stats tracked = new Stats();
-	private final Stats overall = new Stats();
+	private final Stats baseline = new Stats();
+	private final Stats actual = new Stats();
 	private Instant sessionStart;
-	private long enabledAtMillis;
 	private boolean loaded;
 
 	// Live, display-only derived values.
 	private long riskGp;
 	private long netWorthGp;
 	private long bankValueGp;
+	private long lastRecordedNetWorth = -1; // persisted from a previous login; -1 = never recorded
+	private boolean bankOpenedThisLogin;
+	private boolean bankInterfaceOpen;
 
 	// Loot-key edge detection (count a kill on the transition to "holding a key", not on login).
 	private int heldLootKeyCount;
 	private boolean lootKeySynced;
 	private long pendingLootValue; // value in the loot chest, snapshotted while open, realized on claim
+
+	// Bounty Hunter crate detection: inventory diffed against the previous tick's snapshot.
+	private final Map<Integer, Integer> lastInventory = new HashMap<>();
+	private boolean inventorySynced;
+	private long crateFlashGp;
+	private long crateFlashUntil;
+
+	// Bounty Hunter points, read from the game's own points varp (delta-tracked after a login sync).
+	private int lastBhPoints;
+	private boolean bhPointsSynced;
+
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
+	private int kdScanGroup = -1;
+	private int kdScanCountdown;
 
 	@Override
 	protected void startUp()
@@ -129,7 +163,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		sessionStart = Instant.now();
 		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
-		panel = new PvpProfitTrackerPanel(this);
+		panel = new PvpProfitTrackerPanel(this, config);
 		navButton = NavigationButton.builder()
 			.tooltip("PvP Profit Tracker")
 			.icon(icon())
@@ -156,6 +190,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		navButton = null;
 		heldLootKeyCount = 0;
 		lootKeySynced = false;
+		inventorySynced = false;
+		lastInventory.clear();
+		bhPointsSynced = false;
+		bankInterfaceOpen = false;
+		bankOpenedThisLogin = false;
 		loaded = false;
 	}
 
@@ -165,6 +204,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING)
 		{
 			lootKeySynced = false;
+			inventorySynced = false;
+			bankOpenedThisLogin = false;
+			bankInterfaceOpen = false;
 		}
 	}
 
@@ -172,6 +214,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	public void onRuneScapeProfileChanged(RuneScapeProfileChanged e)
 	{
 		// Fires once the account's profile is known (after login / on account switch) — load its tallies.
+		bhPointsSynced = false;
+		bankOpenedThisLogin = false;
+		bankValueGp = 0;
 		load();
 	}
 
@@ -194,11 +239,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 			if (id == InventoryID.INV)
 			{
 				detectLootKeyPickup();
+				detectCrates();
 			}
 		}
 		else if (id == InventoryID.BANK)
 		{
 			bankValueGp = value(e.getItemContainer());
+			bankOpenedThisLogin = true;
 			recomputeLiveValues();
 		}
 
@@ -213,10 +260,53 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return;
 		}
-		// v0.1: book the current at-risk value as the loss. The precise kept-on-death engine
-		// (keep top 3 / 4 with Protect Item / 0 when skulled) lands after the in-game capture session.
+		// Book the current at-risk value as the loss — it shows up as negative profit.
 		recordDeath(riskGp);
 		capture("local player death, booked loss " + riskGp);
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged e)
+	{
+		// The game keeps the player's Bounty Hunter points in a varp — track its increases so kills,
+		// streak/threshold bonuses and emblem turn-ins all count with the game's own numbers.
+		if (e.getVarbitId() != -1 || e.getVarpId() != VarPlayerID.BH_2023_POINTS)
+		{
+			return;
+		}
+		final int now = e.getValue();
+		if (bhPointsSynced)
+		{
+			final int delta = now - lastBhPoints;
+			if (delta > 0) // decreases are shop spending, not a gain to track
+			{
+				session.addPoints(delta);
+				baseline.addPoints(delta);
+				save();
+				updatePanel();
+				capture("bounty hunter points +" + delta + " (now " + now + ")");
+			}
+		}
+		else
+		{
+			bhPointsSynced = true; // first transmit after login is the existing total, not a gain
+		}
+		lastBhPoints = now;
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage e)
+	{
+		// Capture-only: cross-check the points varp and harvest crate/emblem message formats.
+		if (!config.debugLogging() || e.getMessage() == null)
+		{
+			return;
+		}
+		final String m = e.getMessage().toLowerCase();
+		if (m.contains("bounty") || m.contains("emblem") || m.contains("point") || m.contains("crate"))
+		{
+			capture("chat[" + e.getType() + "] " + e.getMessage());
+		}
 	}
 
 	// --- Capture helpers: only active with debug logging on, to harvest ids for the in-game session ---
@@ -242,6 +332,22 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			lootDumpCountdown = 2;
 		}
+		else if (e.getGroupId() == InterfaceID.BANKMAIN)
+		{
+			bankInterfaceOpen = true;
+		}
+		// Any opened interface might be the Kill Death Ratio window — scan it once its text has loaded.
+		kdScanGroup = e.getGroupId();
+		kdScanCountdown = 2;
+	}
+
+	@Subscribe
+	public void onWidgetClosed(WidgetClosed e)
+	{
+		if (e.getGroupId() == InterfaceID.BANKMAIN)
+		{
+			bankInterfaceOpen = false;
+		}
 	}
 
 	@Subscribe
@@ -256,6 +362,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (lootDumpCountdown > 0 && --lootDumpCountdown == 0)
 		{
 			dumpLootChest();
+		}
+		if (kdScanCountdown > 0 && --kdScanCountdown == 0)
+		{
+			maybeImportActualKd(kdScanGroup);
 		}
 	}
 
@@ -392,6 +502,69 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
+	// --- Actual K/D import (the Kill Death Ratio window at Edgeville) ---
+
+	/**
+	 * Scan a just-opened interface for the Kill Death Ratio window and import its kills/deaths as the
+	 * Actual K/D. Matched by text ("kill", "death", "ratio") so it works without knowing the widget id.
+	 */
+	private void maybeImportActualKd(int groupId)
+	{
+		if (groupId < 0 || groupId == InterfaceID.BANKMAIN || groupId == InterfaceID.DEATHKEEP
+			|| groupId == InterfaceID.WILDY_LOOT_CHEST)
+		{
+			return;
+		}
+		final StringBuilder sb = new StringBuilder();
+		for (int child = 0; child < 80; child++)
+		{
+			collectText(client.getWidget(groupId, child), sb, 0);
+		}
+		final String text = sb.toString().toLowerCase();
+		if (!text.contains("ratio") || !text.contains("kill") || !text.contains("death"))
+		{
+			return;
+		}
+		final Matcher k = KILLS_RE.matcher(text);
+		final Matcher d = DEATHS_RE.matcher(text);
+		if (!k.find() || !d.find())
+		{
+			capture("kd-import: ratio window (group " + groupId + ") but no kills/deaths parsed: "
+				+ text.replace('\n', '|'));
+			return;
+		}
+		actual.kills = Long.parseLong(k.group(1).replace(",", ""));
+		actual.deaths = Long.parseLong(d.group(1).replace(",", ""));
+		save();
+		updatePanel();
+		capture("kd-import: actual K/D " + actual.kills + "/" + actual.deaths + " from group " + groupId);
+	}
+
+	private void collectText(Widget w, StringBuilder sb, int depth)
+	{
+		if (w == null || depth > 4)
+		{
+			return;
+		}
+		final String t = w.getText();
+		if (t != null && !t.trim().isEmpty())
+		{
+			sb.append(t.replaceAll("<[^>]*>", " ").trim()).append('\n');
+		}
+		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
+		{
+			if (kids != null)
+			{
+				for (final Widget kid : kids)
+				{
+					collectText(kid, sb, depth + 1);
+				}
+			}
+		}
+	}
+
+	// --- Kill / loot-key / crate detection ---
+
 	private void detectLootKeyPickup()
 	{
 		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
@@ -431,6 +604,90 @@ public class PvpProfitTrackerPlugin extends Plugin
 		heldLootKeyCount = count;
 	}
 
+	/**
+	 * Diff the inventory against the previous snapshot to track Bounty Hunter crates: a crate arriving
+	 * counts as received; a crate leaving alongside new items is an open — the new items' value is the
+	 * crate reward, booked into profit. Skipped while the bank is open (deposits aren't opens).
+	 */
+	private void detectCrates()
+	{
+		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
+		final Map<Integer, Integer> now = new HashMap<>();
+		if (inv != null)
+		{
+			for (final Item it : inv.getItems())
+			{
+				if (it.getId() > 0 && it.getQuantity() > 0)
+				{
+					now.merge(it.getId(), it.getQuantity(), Integer::sum);
+				}
+			}
+		}
+
+		if (inventorySynced)
+		{
+			final int delta = crateCount(now) - crateCount(lastInventory);
+			if (delta > 0)
+			{
+				session.addCrates(delta);
+				baseline.addCrates(delta);
+				save();
+				updatePanel();
+				capture("received " + delta + " bounty crate(s)");
+			}
+			else if (delta < 0 && !bankInterfaceOpen)
+			{
+				long reward = 0;
+				for (final Map.Entry<Integer, Integer> en : now.entrySet())
+				{
+					final int gained = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
+					if (gained > 0 && !isCrate(en.getKey()))
+					{
+						reward += wealthValue(en.getKey()) * gained;
+					}
+				}
+				if (reward > 0)
+				{
+					session.addCrateValue(reward);
+					baseline.addCrateValue(reward);
+					crateFlashGp = reward;
+					crateFlashUntil = System.currentTimeMillis() + 5_000;
+					save();
+					updatePanel();
+					capture("opened bounty crate, reward " + reward);
+				}
+			}
+		}
+		else
+		{
+			inventorySynced = true;
+		}
+		lastInventory.clear();
+		lastInventory.putAll(now);
+	}
+
+	private static int crateCount(Map<Integer, Integer> inv)
+	{
+		int n = 0;
+		for (final int id : BH_CRATES)
+		{
+			n += inv.getOrDefault(id, 0);
+		}
+		return n;
+	}
+
+	private static boolean isCrate(int id)
+	{
+		for (final int c : BH_CRATES)
+		{
+			if (c == id)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private long valueLootKeyContents()
 	{
 		long total = 0;
@@ -456,9 +713,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void recordKill()
 	{
 		session.addKill();
-		sinceEnabled.addKill();
-		tracked.addKill();
-		overall.kills++;
+		baseline.addKill();
+		actual.kills++; // keeps the imported figure current between Edgeville imports
 		save();
 		updatePanel();
 	}
@@ -466,8 +722,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void recordGain(long gp)
 	{
 		session.addGain(gp);
-		sinceEnabled.addGain(gp);
-		tracked.addGain(gp);
+		baseline.addGain(gp);
 		save();
 		updatePanel();
 	}
@@ -475,9 +730,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void recordDeath(long lostGp)
 	{
 		session.addDeath(lostGp);
-		sinceEnabled.addDeath(lostGp);
-		tracked.addDeath(lostGp);
-		overall.deaths++;
+		baseline.addDeath(lostGp);
+		actual.deaths++;
 		save();
 		updatePanel();
 	}
@@ -486,7 +740,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		final long inv = value(client.getItemContainer(InventoryID.INV));
 		final long worn = value(client.getItemContainer(InventoryID.WORN));
-		netWorthGp = bankValueGp + inv + worn;
+		if (bankOpenedThisLogin)
+		{
+			netWorthGp = bankValueGp + inv + worn;
+			lastRecordedNetWorth = netWorthGp;
+			if (loaded)
+			{
+				configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_NET_WORTH, netWorthGp);
+			}
+		}
 		updateRisk();
 	}
 
@@ -673,16 +935,22 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return; // no active profile (e.g. on the login screen) — don't overwrite in-memory state
 		}
-		sinceEnabled.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_SINCE, Stats.class));
-		tracked.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_TRACKED, Stats.class));
-		overall.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_OVERALL, Stats.class));
-		enabledAtMillis = parseLong(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ENABLED_AT));
-		if (enabledAtMillis <= 0)
+		Stats b = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BASELINE, Stats.class);
+		if (b == null)
 		{
-			enabledAtMillis = System.currentTimeMillis();
-			configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ENABLED_AT, enabledAtMillis);
+			b = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_LEGACY_TRACKED, Stats.class);
 		}
+		baseline.copyFrom(b);
+		Stats a = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ACTUAL, Stats.class);
+		if (a == null)
+		{
+			a = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_LEGACY_OVERALL, Stats.class);
+		}
+		actual.copyFrom(a);
+		final String nw = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_NET_WORTH);
+		lastRecordedNetWorth = nw == null ? -1 : parseLong(nw);
 		loaded = true;
+		save(); // re-save immediately so legacy-named tallies migrate to the new keys
 		updatePanel();
 	}
 
@@ -692,9 +960,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return; // avoid persisting defaults before we've loaded the profile's real tallies
 		}
-		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_SINCE, sinceEnabled);
-		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_TRACKED, tracked);
-		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_OVERALL, overall);
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BASELINE, baseline);
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ACTUAL, actual);
 	}
 
 	private static long parseLong(String s)
@@ -722,9 +989,30 @@ public class PvpProfitTrackerPlugin extends Plugin
 		updatePanel();
 	}
 
-	public void resetTracked()
+	public void resetBaselineKd()
 	{
-		tracked.reset();
+		baseline.resetKd();
+		save();
+		updatePanel();
+	}
+
+	public void resetBaselineProfit()
+	{
+		baseline.resetProfit();
+		save();
+		updatePanel();
+	}
+
+	public void resetBaselineCrates()
+	{
+		baseline.resetCrates();
+		save();
+		updatePanel();
+	}
+
+	public void resetBaselinePoints()
+	{
+		baseline.resetPoints();
 		save();
 		updatePanel();
 	}
@@ -744,19 +1032,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return session;
 	}
 
-	Stats getSinceEnabled()
+	Stats getBaseline()
 	{
-		return sinceEnabled;
+		return baseline;
 	}
 
-	Stats getTracked()
+	Stats getActual()
 	{
-		return tracked;
-	}
-
-	Stats getOverall()
-	{
-		return overall;
+		return actual;
 	}
 
 	long getRiskGp()
@@ -764,9 +1047,30 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return riskGp;
 	}
 
-	long getNetWorthGp()
+	/** Net worth for display: live once the bank was opened, else the last recorded value, else a prompt. */
+	String netWorthDisplay()
 	{
-		return netWorthGp;
+		if (bankOpenedThisLogin)
+		{
+			return fmt(netWorthGp);
+		}
+		if (lastRecordedNetWorth >= 0)
+		{
+			return fmt(lastRecordedNetWorth) + " (last recorded)";
+		}
+		return "Open bank first";
+	}
+
+	/** Crate reward currently being flashed on the panel, or 0 when the 5-second window has passed. */
+	long crateFlashGp()
+	{
+		return System.currentTimeMillis() < crateFlashUntil ? crateFlashGp : 0;
+	}
+
+	int crateFlashSecondsLeft()
+	{
+		final long ms = crateFlashUntil - System.currentTimeMillis();
+		return ms > 0 ? (int) Math.ceil(ms / 1000.0) : 0;
 	}
 
 	String sessionDuration()
@@ -782,42 +1086,22 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);
 	}
 
-	String enabledSince()
+	/** Format a gp value per the user's number-format setting (full or compact). */
+	String fmt(long v)
 	{
-		if (enabledAtMillis <= 0)
-		{
-			return "—";
-		}
-		return Instant.ofEpochMilli(enabledAtMillis).atZone(ZoneId.systemDefault()).toLocalDate().toString();
+		return config.gpFormat().format(v);
 	}
 
-	/** Compact gp formatting: 1.2M / 12.3K / 950. */
-	static String gp(long v)
-	{
-		final long a = Math.abs(v);
-		if (a >= 10_000_000)
-		{
-			return (v / 1_000_000) + "M";
-		}
-		if (a >= 1_000_000)
-		{
-			return String.format("%.1fM", v / 1_000_000.0);
-		}
-		if (a >= 100_000)
-		{
-			return (v / 1000) + "K";
-		}
-		if (a >= 1000)
-		{
-			return String.format("%.1fK", v / 1000.0);
-		}
-		return Long.toString(v);
-	}
-
-	/** Exact gp with thousands separators, e.g. 1,378,016. */
+	/** Exact gp with thousands separators, e.g. 1,378,016 (used in breakdown tooltips). */
 	static String gpFull(long v)
 	{
 		return String.format("%,d", v);
+	}
+
+	/** K/D display: kills/deaths with the ratio, e.g. 12/3 (4.00). */
+	static String kdText(Stats s)
+	{
+		return s.kills + "/" + s.deaths + " (" + String.format("%.2f", s.kd()) + ")";
 	}
 
 	private static BufferedImage icon()

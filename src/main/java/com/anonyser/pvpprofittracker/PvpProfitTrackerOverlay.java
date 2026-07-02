@@ -9,6 +9,10 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 
+/**
+ * On-screen overlay. Lines are grouped in a fixed order — K/D (actual, baseline, session), profit
+ * (baseline, session), risk, net worth — with each line toggleable in the config.
+ */
 class PvpProfitTrackerOverlay extends OverlayPanel
 {
 	private final PvpProfitTrackerPlugin plugin;
@@ -30,41 +34,55 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 			return null;
 		}
 
-		final Stats s = plugin.getSession();
-		final long profit = s.profit();
-		final Color profitColor = profit >= 0 ? config.profitColor() : config.lossColor();
-
 		panelComponent.getChildren().clear();
-		panelComponent.setPreferredSize(new Dimension(165, 0));
+		panelComponent.setPreferredSize(new Dimension(185, 0));
 		panelComponent.getChildren().add(TitleComponent.builder().text("PvP Profit").build());
 
-		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Profit")
-			.right(PvpProfitTrackerPlugin.gp(profit))
-			.rightColor(profitColor)
-			.build());
-
-		panelComponent.getChildren().add(LineComponent.builder()
-			.left("K/D")
-			.right(s.kills + "/" + s.deaths + "  (" + String.format("%.2f", s.kd()) + ")")
-			.build());
-
+		if (config.showActualKd())
+		{
+			final Stats a = plugin.getActual();
+			addLine("K/D (actual)",
+				a.kills + a.deaths > 0 ? PvpProfitTrackerPlugin.kdText(a) : "—", null);
+		}
+		if (config.showBaselineKd())
+		{
+			addLine("K/D (baseline)", PvpProfitTrackerPlugin.kdText(plugin.getBaseline()), null);
+		}
+		if (config.showSessionKd())
+		{
+			addLine("K/D (session)", PvpProfitTrackerPlugin.kdText(plugin.getSession()), null);
+		}
+		if (config.showBaselineProfit())
+		{
+			addProfitLine("Profit (baseline)", plugin.getBaseline().profit());
+		}
+		if (config.showSessionProfit())
+		{
+			addProfitLine("Profit (session)", plugin.getSession().profit());
+		}
 		if (config.showRisk())
 		{
-			panelComponent.getChildren().add(LineComponent.builder()
-				.left("Risk")
-				.right(PvpProfitTrackerPlugin.gpFull(plugin.getRiskGp()))
-				.build());
+			addLine("Risk", plugin.fmt(plugin.getRiskGp()), null);
 		}
-
 		if (config.showNetWorth())
 		{
-			panelComponent.getChildren().add(LineComponent.builder()
-				.left("Net worth")
-				.right(PvpProfitTrackerPlugin.gpFull(plugin.getNetWorthGp()))
-				.build());
+			addLine("Net worth", plugin.netWorthDisplay(), null);
 		}
 
 		return super.render(graphics);
+	}
+
+	private void addLine(String left, String right, Color rightColor)
+	{
+		panelComponent.getChildren().add(LineComponent.builder()
+			.left(left)
+			.right(right)
+			.rightColor(rightColor)
+			.build());
+	}
+
+	private void addProfitLine(String left, long profit)
+	{
+		addLine(left, plugin.fmt(profit), profit >= 0 ? config.profitColor() : config.lossColor());
 	}
 }
