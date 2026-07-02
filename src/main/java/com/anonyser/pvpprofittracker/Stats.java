@@ -22,9 +22,13 @@ class Stats
 		return deaths == 0 ? kills : (double) kills / deaths;
 	}
 
-	void addKill(long gp)
+	void addKill()
 	{
 		kills++;
+	}
+
+	void addGain(long gp)
+	{
 		gainedGp += gp;
 	}
 

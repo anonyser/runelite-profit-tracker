@@ -111,6 +111,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Loot-key edge detection (count a kill on the transition to "holding a key", not on login).
 	private boolean heldLootKey;
 	private boolean lootKeySynced;
+	private long pendingLootValue; // value in the loot chest, snapshotted while open, realized on claim
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
 
@@ -171,7 +172,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		final int id = e.getContainerId();
 
-		if (id == InventoryID.INV || id == InventoryID.WORN)
+		if (isLootContainer(id))
+		{
+			final long v = valueLootKeyContents();
+			if (v > 0)
+			{
+				pendingLootValue = v; // snapshot the unclaimed loot while it's present; ignore clears
+			}
+		}
+		else if (id == InventoryID.INV || id == InventoryID.WORN)
 		{
 			recomputeLiveValues();
 			if (id == InventoryID.INV)
@@ -400,9 +409,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 		if (has && !heldLootKey)
 		{
-			final long gp = valueLootKeyContents();
-			recordKill(gp);
-			capture("loot key received, contents valued " + gp);
+			recordKill(); // a kill — the loot value is realized when you claim the chest
+			capture("kill: received loot key");
+		}
+		else if (!has && heldLootKey && pendingLootValue > 0)
+		{
+			recordGain(pendingLootValue); // claimed the chest — realize the loot value once
+			capture("claimed loot, realized gain " + pendingLootValue);
+			pendingLootValue = 0;
 		}
 		heldLootKey = has;
 	}
@@ -417,12 +431,33 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
-	private void recordKill(long gp)
+	private boolean isLootContainer(int id)
 	{
-		session.addKill(gp);
-		sinceEnabled.addKill(gp);
-		tracked.addKill(gp);
+		for (final int c : LOOT_KEY_CONTAINERS)
+		{
+			if (c == id)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void recordKill()
+	{
+		session.addKill();
+		sinceEnabled.addKill();
+		tracked.addKill();
 		overall.kills++;
+		save();
+		updatePanel();
+	}
+
+	private void recordGain(long gp)
+	{
+		session.addGain(gp);
+		sinceEnabled.addGain(gp);
+		tracked.addGain(gp);
 		save();
 		updatePanel();
 	}
