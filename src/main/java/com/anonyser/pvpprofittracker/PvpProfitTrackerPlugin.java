@@ -182,11 +182,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int ticksSinceLogin;
 
 	// Chugging barrel state: the device's contents are a real item container
-	// (PREPOT_DEVICE_INV) — tracked live, valued into net worth, chugs booked off the
-	// chug animation. Persisted per profile so the value survives relogs.
+	// (PREPOT_DEVICE_INV), but it only transmits while banking — so contents sync from the
+	// container and each chug books off the chug animation, with the next bank visit
+	// correcting any drift. Persisted per profile so the value survives relogs.
 	private final Map<Integer, Integer> barrelDoses = new HashMap<>();
 	private long barrelGp;
-	private int lastChugTick = -10;
 
 	// Consumable detection: an inventory drop right after the eat/drink animation is a consume,
 	// unless it's the death tick wiping the inventory (that loss is booked as the death).
@@ -387,7 +387,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 			else if (e.getActor().getAnimation() == CHUG_ANIMATION)
 			{
-				lastChugTick = client.getTickCount();
+				bookChug();
 			}
 			capture("local player animation=" + e.getActor().getAnimation());
 		}
@@ -816,9 +816,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// --- Chugging barrel (pre-pot device) ---
 
 	/**
-	 * The device's contents are a real item container. Any change updates the stored value
-	 * (counted into net worth); a value drop right after the chug animation is a chug and
-	 * books as a consumable. Fills and reconfiguration just update the contents.
+	 * Sync the barrel's contents from its item container (transmits while banking). Contents
+	 * only — chugs are booked from the animation, since the container is silent in the field.
 	 */
 	private void handleBarrelChanged(ItemContainer c)
 	{
@@ -841,23 +840,41 @@ public class PvpProfitTrackerPlugin extends Plugin
 		recomputeBarrelGp();
 		saveBarrel();
 		capture("barrel value " + oldGp + " -> " + barrelGp);
+		recomputeLiveValues();
+		updatePanel();
+	}
 
-		final long delta = oldGp - barrelGp;
-		if (delta > 0 && client.getTickCount() - lastChugTick <= 1)
+	/** One chug = one dose of every stored potion: book it and shrink the tracked contents. */
+	private void bookChug()
+	{
+		if (barrelDoses.isEmpty())
 		{
-			if (inPvpContext())
+			capture("chug detected but barrel contents unknown — open your bank once to sync");
+			return;
+		}
+		long value = 0;
+		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
+		{
+			if (en.getValue() > 0)
 			{
-				session.addConsumed(delta);
-				baseline.addConsumed(delta);
-				save();
-				capture("chugged barrel: " + delta + " gp");
-			}
-			else
-			{
-				capture("chug outside PvP context, not booked (" + delta + " gp)");
+				value += perDoseValue(en.getKey());
+				en.setValue(en.getValue() - 1);
 			}
 		}
+		recomputeBarrelGp();
+		saveBarrel();
 		recomputeLiveValues();
+		if (value > 0 && inPvpContext())
+		{
+			session.addConsumed(value);
+			baseline.addConsumed(value);
+			save();
+			capture("chugged barrel: one dose of each, " + value + " gp");
+		}
+		else if (value > 0)
+		{
+			capture("chug outside PvP context, not booked (" + value + " gp)");
+		}
 		updatePanel();
 	}
 
