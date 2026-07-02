@@ -301,8 +301,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			if (id == InventoryID.INV)
 			{
 				detectLootKeyPickup();
-				detectCrates();
 			}
+			// Diff runs on both containers: the snapshot spans inventory + equipment, so a
+			// weapon swap right after eating nets to zero instead of booking as a meal.
+			detectCrates();
 		}
 		else if (id == InventoryID.BANK)
 		{
@@ -744,11 +746,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private void detectCrates()
 	{
-		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
 		final Map<Integer, Integer> now = new HashMap<>();
-		if (inv != null)
+		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
 		{
-			for (final Item it : inv.getItems())
+			final ItemContainer c = client.getItemContainer(cid);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
 			{
 				if (it.getId() > 0 && it.getQuantity() > 0)
 				{
