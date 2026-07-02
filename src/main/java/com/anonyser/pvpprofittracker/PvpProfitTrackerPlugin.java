@@ -329,6 +329,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// Book the current at-risk value as the loss — it shows up as negative profit.
 		lastDeathTick = client.getTickCount();
+		// Never diff the inventory across a death: the wipe-and-restore shuffle looks like
+		// crates being opened and items appearing. Resync fresh from the next change instead.
+		inventorySynced = false;
 		recordDeath(riskGp);
 		capture("local player death, booked loss " + riskGp);
 	}
