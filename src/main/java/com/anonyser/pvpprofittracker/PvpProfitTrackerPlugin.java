@@ -105,7 +105,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// Live, display-only derived values.
 	private long riskGp;
-	private long riskOffset; // game's exact death value minus our estimate — learned from the death screen
 	private long netWorthGp;
 	private long bankValueGp;
 
@@ -231,7 +230,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
-			calibrateRisk();
 		}
 	}
 
@@ -444,10 +442,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
-	/** Displayed risk: our live, real-state estimate plus the calibration learned from the death screen. */
+	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */
 	private void updateRisk()
 	{
-		final long newRisk = Math.max(0, estimateRisk() + riskOffset);
+		final long newRisk = computeRisk();
 		if (newRisk != riskGp)
 		{
 			riskGp = newRisk;
@@ -456,76 +454,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	/**
-	 * When the Items Kept on Death screen is open, snap our estimate to the game's exact "Guide risk value"
-	 * by learning the offset (the untradeable death-value gap I can't derive). After this, Risk tracks live
-	 * from your real state — no need to keep the screen open, and toggling its scenarios won't affect it.
+	 * Value you'd lose if you died right now: everything carried, minus the items kept on death — the 3 most
+	 * valuable (4 with Protect Item, 0 when skulled, 1 skulled + Protect Item). Ranked and valued by
+	 * {@link #deathValue}, with a kept stack protected in full. Recomputes on inventory, prayer and skull
+	 * changes, so it's fully live and never jumps.
 	 */
-	private void calibrateRisk()
+	private long computeRisk()
 	{
-		final Long game = readGuideRiskValue();
-		if (game != null)
-		{
-			riskOffset = game - estimateRisk();
-			capture("calibrated riskOffset=" + riskOffset + " (game=" + game + ")");
-			updateRisk();
-		}
-	}
-
-	/** The game's current "Guide risk value" from the death screen, or null if it isn't open. */
-	private Long readGuideRiskValue()
-	{
-		for (int child = 0; child < 40; child++)
-		{
-			final Widget w = client.getWidget(InterfaceID.DEATHKEEP, child);
-			Long v = parseGuideRisk(w);
-			if (v == null && w != null && w.getStaticChildren() != null)
-			{
-				for (final Widget k : w.getStaticChildren())
-				{
-					v = parseGuideRisk(k);
-					if (v != null)
-					{
-						break;
-					}
-				}
-			}
-			if (v != null)
-			{
-				return v;
-			}
-		}
-		return null;
-	}
-
-	private Long parseGuideRisk(Widget w)
-	{
-		if (w == null || w.getText() == null || !w.getText().toLowerCase().contains("guide risk value"))
-		{
-			return null;
-		}
-		final String digits = w.getText().replaceAll("[^0-9]", "");
-		if (digits.isEmpty())
-		{
-			return null;
-		}
-		try
-		{
-			return Long.parseLong(digits);
-		}
-		catch (NumberFormatException e)
-		{
-			return null;
-		}
-	}
-
-	/**
-	 * Fallback estimate before the game's value has been read: everything carried minus the items kept on
-	 * death (3 / 4 with Protect Item / 0 skulled / 1 skulled+Protect Item), pricing untradeables at store
-	 * value. Approximate — the game's own "Guide risk value" is exact.
-	 */
-	private long estimateRisk()
-	{
-		final List<long[]> items = new ArrayList<>(); // [perItemDeathValue, stackValue, itemId]
+		final List<long[]> items = new ArrayList<>(); // [perItemValue, stackValue]
 		long total = 0;
 		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
 		{
@@ -549,7 +485,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 				}
 				final long stack = per * qty;
 				total += stack;
-				items.add(new long[]{per, stack, id});
+				items.add(new long[]{per, stack});
 			}
 		}
 		items.sort((a, b) -> Long.compare(b[0], a[0]));
@@ -568,18 +504,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return base + (client.isPrayerActive(Prayer.PROTECT_ITEM) ? 1 : 0);
 	}
 
-	private int skullIcon()
-	{
-		final Player me = client.getLocalPlayer();
-		return me == null ? -1 : me.getSkullIcon();
-	}
-
 	private boolean isSkulled()
 	{
-		return skullIcon() != -1;
+		final Player me = client.getLocalPlayer();
+		return me != null && me.getSkullIcon() != -1;
 	}
 
-	/** Per-item value the game uses on death: GE price if tradeable, else the item's store value. */
+	/** Per-item value lost on death: GE price if tradeable, else the item's store value. */
 	private long deathValue(int id)
 	{
 		final long ge = itemManager.getItemPrice(id);
