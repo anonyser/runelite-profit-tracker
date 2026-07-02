@@ -99,6 +99,12 @@ class PvpProfitTrackerPanel extends PluginPanel
 			final JPanel p = titled("Net worth");
 			p.add(row("Bank + carried", plugin.netWorthDisplay(), null,
 				"Informational only — never counts toward profit."));
+			if (plugin.getBarrelGp() > 0)
+			{
+				p.add(row("Incl. barrel", plugin.fmt(plugin.getBarrelGp()), null,
+					"Potions stored in your chugging barrel — counted in net worth; "
+						+ "each chug books one dose of each as a consumable."));
+			}
 			body.add(p);
 			body.add(gap());
 		}

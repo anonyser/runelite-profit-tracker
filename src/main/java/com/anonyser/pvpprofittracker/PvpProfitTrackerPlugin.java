@@ -72,6 +72,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_BASELINE = "baseline";
 	private static final String K_ACTUAL = "actual";
 	private static final String K_NET_WORTH = "netWorth";
+	private static final String K_BARREL = "barrel";
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
@@ -111,6 +112,26 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// The eat/drink animation (confirmed in-game against food and potions alike).
 	private static final int CONSUME_ANIMATION = 829;
+
+	// Trailing dose marker in potion names, e.g. "Saradomin brew(4)".
+	private static final Pattern DOSES_RE = Pattern.compile("\\((\\d)\\)\\s*$");
+
+	// Chugging barrel (pre-pot device): per-slot dose counts, 4 loadouts x 5 slots. Contents
+	// (which potions) are read from the configure UI; these varbits track the doses live.
+	private static final int[] PREPOT_CAP_VARBITS = {
+		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_1_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_3_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_0_SLOT_4_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_1_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_3_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_1_SLOT_4_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_1_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_3_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_2_SLOT_4_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_0_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_1_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_2_CAP, VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_3_CAP,
+		VarbitID.PREPOT_DEVICE_LOADOUT_3_SLOT_4_CAP,
+	};
 
 	@Inject
 	private Client client;
@@ -172,6 +193,16 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int lastBhPoints;
 	private boolean bhPointsSynced;
 	private int ticksSinceLogin;
+
+	// Chugging barrel state: potion item id -> doses left (from the configure UI), the stored
+	// value (counted into net worth), and chug detection off the per-slot dose varbits.
+	private final Map<Integer, Integer> barrelDoses = new HashMap<>();
+	private long barrelGp;
+	private final int[] lastPrepotCaps = new int[PREPOT_CAP_VARBITS.length];
+	private boolean prepotChugPending;
+	private boolean prepotBigChange;
+	private boolean prepotInterfaceOpen;
+	private int prepotScanCountdown;
 
 	// Consumable detection: an inventory drop right after the eat/drink animation is a consume,
 	// unless it's the death tick wiping the inventory (that loss is booked as the death).
@@ -300,6 +331,35 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged e)
 	{
+		// Chugging barrel dose varbits: a slot dropping by exactly one outside the bank/config
+		// UI is a chug; bigger moves are refills or reconfiguration and just trigger a resync.
+		final int slot = prepotCapSlot(e.getVarbitId());
+		if (slot >= 0)
+		{
+			final int prev = lastPrepotCaps[slot];
+			lastPrepotCaps[slot] = e.getValue();
+			if (ticksSinceLogin < 5)
+			{
+				return; // login transmit — sync only
+			}
+			if (bankInterfaceOpen || prepotInterfaceOpen)
+			{
+				prepotScanCountdown = 2; // being reconfigured — re-read contents, never book
+			}
+			else if (e.getValue() < prev)
+			{
+				if (prev - e.getValue() > 1)
+				{
+					prepotBigChange = true;
+				}
+				else
+				{
+					prepotChugPending = true;
+				}
+			}
+			return;
+		}
+
 		// The game keeps the player's Bounty Hunter points in a varp — track its increases so kills,
 		// streak/threshold bonuses and emblem turn-ins all count with the game's own numbers.
 		if (e.getVarbitId() != -1 || e.getVarpId() != VarPlayerID.BH_2023_POINTS)
@@ -379,6 +439,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			bankInterfaceOpen = true;
 		}
+		else if (e.getGroupId() == InterfaceID.PREPOT_DEVICE)
+		{
+			prepotInterfaceOpen = true;
+			prepotScanCountdown = 2; // read the barrel's contents once the UI has populated
+		}
 		// Any opened interface might be the Kill Death Ratio window — scan it once its text has loaded.
 		kdScanGroup = e.getGroupId();
 		kdScanCountdown = 2;
@@ -390,6 +455,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (e.getGroupId() == InterfaceID.BANKMAIN)
 		{
 			bankInterfaceOpen = false;
+		}
+		else if (e.getGroupId() == InterfaceID.PREPOT_DEVICE)
+		{
+			prepotInterfaceOpen = false;
 		}
 	}
 
@@ -413,6 +482,23 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (kdScanCountdown > 0 && --kdScanCountdown == 0)
 		{
 			maybeImportActualKd(kdScanGroup);
+		}
+		if (prepotScanCountdown > 0 && --prepotScanCountdown == 0)
+		{
+			scanBarrelContents();
+		}
+		if (prepotChugPending || prepotBigChange)
+		{
+			if (prepotBigChange)
+			{
+				capture("prepot: dose counts moved by more than one — treating as reconfiguration");
+			}
+			else
+			{
+				bookChug();
+			}
+			prepotChugPending = false;
+			prepotBigChange = false;
 		}
 	}
 
@@ -779,6 +865,163 @@ public class PvpProfitTrackerPlugin extends Plugin
 		lastInventory.putAll(now);
 	}
 
+	// --- Chugging barrel (pre-pot device) ---
+
+	private static int prepotCapSlot(int varbitId)
+	{
+		for (int i = 0; i < PREPOT_CAP_VARBITS.length; i++)
+		{
+			if (PREPOT_CAP_VARBITS[i] == varbitId)
+			{
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	/** Read the barrel's exact contents (potion item + doses) from the open configure UI. */
+	private void scanBarrelContents()
+	{
+		final Widget contents = client.getWidget(InterfaceID.PrepotDevice.DEVICE_CONTENTS);
+		if (contents == null)
+		{
+			return; // UI already closed — the next open re-triggers the scan
+		}
+		final Map<Integer, Integer> found = new HashMap<>();
+		for (final Widget[] kids : new Widget[][]{contents.getDynamicChildren(), contents.getStaticChildren()})
+		{
+			if (kids == null)
+			{
+				continue;
+			}
+			for (final Widget w : kids)
+			{
+				if (w != null && w.getItemId() > 0 && w.getItemQuantity() > 0)
+				{
+					found.merge(w.getItemId(), w.getItemQuantity(), Integer::sum);
+					capture("barrel: id=" + w.getItemId() + " qty=" + w.getItemQuantity()
+						+ " name=" + itemName(w.getItemId()));
+				}
+			}
+		}
+		barrelDoses.clear();
+		barrelDoses.putAll(found);
+		recomputeBarrelGp();
+		saveBarrel();
+		recomputeLiveValues();
+		updatePanel();
+		capture("barrel contents synced, stored value " + barrelGp);
+	}
+
+	/** One chug = one dose of every stored potion: book it as a consumable and shrink the barrel. */
+	private void bookChug()
+	{
+		if (barrelDoses.isEmpty())
+		{
+			capture("chug detected but barrel contents unknown — open the barrel's configure UI once");
+			return;
+		}
+		long value = 0;
+		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
+		{
+			if (en.getValue() > 0)
+			{
+				value += perDoseValue(en.getKey());
+				en.setValue(en.getValue() - 1);
+			}
+		}
+		recomputeBarrelGp();
+		saveBarrel();
+		recomputeLiveValues();
+		if (value > 0 && inPvpContext())
+		{
+			session.addConsumed(value);
+			baseline.addConsumed(value);
+			save();
+			capture("chugged barrel: one dose of each, " + value + " gp");
+		}
+		else if (value > 0)
+		{
+			capture("chug outside PvP context, not booked (" + value + " gp)");
+		}
+		updatePanel();
+	}
+
+	/** Value of a single dose: the potion item's wealth value split by its dose count. */
+	private long perDoseValue(int itemId)
+	{
+		final long v = wealthValue(itemId);
+		final int doses = dosesInName(itemId);
+		return doses > 1 ? v / doses : v;
+	}
+
+	private int dosesInName(int itemId)
+	{
+		try
+		{
+			final Matcher m = DOSES_RE.matcher(itemManager.getItemComposition(itemId).getName());
+			return m.find() ? Integer.parseInt(m.group(1)) : 0;
+		}
+		catch (RuntimeException e)
+		{
+			return 0;
+		}
+	}
+
+	private void recomputeBarrelGp()
+	{
+		long total = 0;
+		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
+		{
+			total += perDoseValue(en.getKey()) * en.getValue();
+		}
+		barrelGp = total;
+	}
+
+	private void saveBarrel()
+	{
+		if (!profileReady())
+		{
+			return;
+		}
+		final StringBuilder sb = new StringBuilder();
+		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
+		{
+			if (sb.length() > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(en.getKey()).append(':').append(en.getValue());
+		}
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BARREL, sb.toString());
+	}
+
+	private void loadBarrel()
+	{
+		barrelDoses.clear();
+		final String s = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_BARREL);
+		if (s != null && !s.isEmpty())
+		{
+			for (final String part : s.split(","))
+			{
+				final int colon = part.indexOf(':');
+				if (colon > 0)
+				{
+					try
+					{
+						barrelDoses.put(Integer.parseInt(part.substring(0, colon).trim()),
+							Integer.parseInt(part.substring(colon + 1).trim()));
+					}
+					catch (NumberFormatException ignored)
+					{
+						// skip a malformed entry
+					}
+				}
+			}
+		}
+		recomputeBarrelGp();
+	}
+
 	/** In the Wilderness or on a PvP/BH world — where kills, deaths and consumables count. */
 	private boolean inPvpContext()
 	{
@@ -881,7 +1124,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final long worn = value(client.getItemContainer(InventoryID.WORN));
 		if (bankOpenedThisLogin)
 		{
-			netWorthGp = bankValueGp + inv + worn;
+			// Barrel contents are invisible to the containers, so their value is added here.
+			netWorthGp = bankValueGp + inv + worn + barrelGp;
 			lastRecordedNetWorth = netWorthGp;
 			if (profileReady())
 			{
@@ -1079,6 +1323,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		actual.copyFrom(readStats(K_ACTUAL));
 		final String nw = configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_NET_WORTH);
 		lastRecordedNetWorth = nw == null ? -1 : parseLong(nw);
+		loadBarrel();
 		loadedProfileKey = profile;
 		updatePanel();
 	}
@@ -1199,6 +1444,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	long getRiskGp()
 	{
 		return riskGp;
+	}
+
+	/** Value of the potions stored in the chugging barrel (0 until its configure UI is opened once). */
+	long getBarrelGp()
+	{
+		return barrelGp;
 	}
 
 	/** Net worth for display: live once the bank was opened, else the last recorded value, else a prompt. */
