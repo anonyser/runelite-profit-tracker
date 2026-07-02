@@ -1,27 +1,52 @@
 # PvP Profit Tracker
 
-A RuneLite plugin that tracks your **real** PvP profit — not just what you loot, but what it actually costs
-you. Profit is an event ledger:
+A RuneLite plugin that tracks your **real** PvP profit — not just what you loot, but what it actually
+costs you. Profit is an event ledger:
 
 ```
-profit = loot-key value gained  −  what you lose on death  −  consumables used in PvP
+profit = loot-key gains + crate rewards − death losses − consumables used in PvP
 ```
 
-Bank/net-worth changes (buying supplies at the GE, etc.) never touch profit — only PvP events do. It's
-purely PvP: PvM/skilling never affect the number.
+Buying supplies at the GE never touches profit — a loss only happens when you die or when you use
+something up in PvP. It's purely PvP: PvM and skilling never move the number.
 
-Also shows **K/D**, a live **risk** meter (what you'd lose if you died right now) and total **net worth**
-(bank + gear + inventory, refreshed when you open the bank).
+Display-only. It reads game state and shows numbers; it never sends input or acts for the player.
 
-Display-only — it reads game state and shows numbers. No automation.
+## What it tracks
 
-## Status
-v0.1 — in development. See the tracker repo's `runelite-plugin-library/06-profit-tracker-groundwork.md`
-for the design and the in-game data still to be captured (skull/death signals, Bounty Hunter varbits,
-Edgeville K/D sign import, chugging-barrel handling).
+- **Kills / deaths** — a kill is a loot key landing in your inventory; loot value books when you claim
+  the chest, so banking the key first doesn't matter.
+- **Profit** — loot keys, Bounty Hunter crate rewards (booked once, when the crate is opened), death
+  losses (the risk you were carrying), and consumables: food, potions, and chugging-barrel sips, each
+  priced at what you actually used (a brew sip costs one dose, not a whole potion).
+- **Risk** — live "what you'd lose if you died right now": kept-items aware (3 kept, 4 with Protect
+  Item, 0 skulled, 1 skulled with Protect Item), with untradeables priced at their repair-on-death cost
+  from a bundled table.
+- **Net worth** — bank + carried + chugging-barrel contents, GE prices with high-alch for untradeables.
+  Informational only; it never feeds profit.
+- **Bounty Hunter** — crates received and their reward values, plus points: your current balance and
+  points gained, read from the game's own data so kills, streaks and emblem turn-ins all count exactly.
+- **Actual K/D** — imported from the game's Kill Death Ratio window (open it once at Edgeville). Note:
+  the game's number covers world PvP only; Bounty Hunter kills aren't included in it.
+
+## Tracking modes
+
+Most values come in up to three flavours, each toggleable:
+
+- **Actual** — your true in-game value (K/D and points balance).
+- **Session** — this session only; resets when the client restarts.
+- **Baseline** — a long-term tally that keeps saving across sessions until you reset it. Reset buttons
+  live on the plugin's side panel (the green `$` icon in the sidebar).
+
+## Config
+
+Everything is toggleable under **Trackers**, number formatting (full `1,428,638` or compact `1.428M`)
+under **Display**, and the Wilderness/PvP-only gate under **Advanced**. The side panel shows the full
+breakdown, the baseline resets, and the crate-value flash when you open a crate.
 
 ## Dev
+
 ```bash
-./gradlew build           # compile + test
-./gradlew runClient       # launch a dev RuneLite client with the plugin (Java 11)
+./gradlew build           # compile + test (Java 11)
+./gradlew runClient       # launch a dev RuneLite client with the plugin loaded
 ```

@@ -28,7 +28,6 @@ import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
-import net.runelite.api.Prayer;
 import net.runelite.api.SkullIcon;
 import net.runelite.api.Varbits;
 import net.runelite.api.WorldType;
@@ -1176,7 +1175,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int keptCount()
 	{
 		final int base = isSkulled() ? 0 : 3;
-		return base + (client.isPrayerActive(Prayer.PROTECT_ITEM) ? 1 : 0);
+		return base + (client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1 ? 1 : 0);
 	}
 
 	private boolean isSkulled()
