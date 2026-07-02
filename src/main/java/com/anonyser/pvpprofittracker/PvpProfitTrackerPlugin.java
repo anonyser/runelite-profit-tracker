@@ -156,6 +156,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Bounty Hunter points, read from the game's own points varp (delta-tracked after a login sync).
 	private int lastBhPoints;
 	private boolean bhPointsSynced;
+	private int ticksSinceLogin;
 
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
@@ -215,6 +216,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			// The profile-changed event can fire before the state reaches LOGGED_IN — load from
 			// whichever happens last so the tallies always arm (self-guarded against re-loads).
+			ticksSinceLogin = 0;
 			load();
 		}
 	}
@@ -284,6 +286,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return;
 		}
 		final int now = e.getValue();
+		// The login varp burst can transmit a zero before the real total — booking that
+		// difference invents points out of thin air. Sync-only until the login settles.
+		if (ticksSinceLogin < 5)
+		{
+			bhPointsSynced = true;
+			lastBhPoints = now;
+			return;
+		}
 		if (bhPointsSynced)
 		{
 			final int delta = now - lastBhPoints;
@@ -361,6 +371,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick e)
 	{
+		if (ticksSinceLogin < Integer.MAX_VALUE)
+		{
+			ticksSinceLogin++;
+		}
 		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
 		updateRisk();
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
