@@ -40,7 +40,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		body.add(gap());
 		body.add(scopeBlock("Session (" + plugin.sessionDuration() + ")", plugin.getSession(), plugin::resetSession, "Reset session"));
 		body.add(gap());
-		body.add(scopeBlock("Since enabled", plugin.getSinceEnabled(), null, null));
+		body.add(scopeBlock("Since enabled (" + plugin.enabledSince() + ")", plugin.getSinceEnabled(), null, null));
 		body.add(gap());
 		body.add(scopeBlock("Tracked", plugin.getTracked(), plugin::resetTracked, "Reset tracked"));
 		body.add(gap());

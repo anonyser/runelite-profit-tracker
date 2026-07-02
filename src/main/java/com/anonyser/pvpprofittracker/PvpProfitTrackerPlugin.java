@@ -9,6 +9,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -16,12 +17,16 @@ import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -40,6 +45,12 @@ import org.slf4j.LoggerFactory;
 public class PvpProfitTrackerPlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(PvpProfitTrackerPlugin.class);
+
+	// Persistence keys (stored per RuneScape profile so each account keeps its own tallies).
+	private static final String K_SINCE = "sinceEnabled";
+	private static final String K_TRACKED = "tracked";
+	private static final String K_OVERALL = "overall";
+	private static final String K_ENABLED_AT = "enabledAt";
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
@@ -64,6 +75,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private ClientToolbar clientToolbar;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private PvpProfitTrackerConfig config;
 
 	// Overlay and panel are created manually (they reference the plugin) to avoid circular DI.
@@ -77,6 +91,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private final Stats tracked = new Stats();
 	private final Stats overall = new Stats();
 	private Instant sessionStart;
+	private long enabledAtMillis;
+	private boolean loaded;
 
 	// Live, display-only derived values.
 	private long riskGp;
@@ -101,11 +117,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 			.panel(panel)
 			.build();
 		clientToolbar.addNavigation(navButton);
+
+		// If enabled while already logged in, load this profile's saved tallies now.
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			load();
+		}
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		save();
 		overlayManager.remove(overlay);
 		clientToolbar.removeNavigation(navButton);
 		overlay = null;
@@ -113,6 +136,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		navButton = null;
 		heldLootKey = false;
 		lootKeySynced = false;
+		loaded = false;
 	}
 
 	@Subscribe
@@ -122,6 +146,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			lootKeySynced = false;
 		}
+	}
+
+	@Subscribe
+	public void onRuneScapeProfileChanged(RuneScapeProfileChanged e)
+	{
+		// Fires once the account's profile is known (after login / on account switch) — load its tallies.
+		load();
 	}
 
 	@Subscribe
@@ -163,6 +194,35 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (config.debugLogging())
 		{
 			log.info("[capture] local player death, booked loss {}", riskGp);
+		}
+	}
+
+	// --- Capture helpers: only active with debug logging on, to harvest ids for the in-game session ---
+
+	@Subscribe
+	public void onAnimationChanged(AnimationChanged e)
+	{
+		if (config.debugLogging() && e.getActor() == client.getLocalPlayer())
+		{
+			log.info("[capture] local player animation={}", e.getActor().getAnimation());
+		}
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged e)
+	{
+		if (config.debugLogging())
+		{
+			log.info("[capture] VarbitChanged varbitId={} value={}", e.getVarbitId(), e.getValue());
+		}
+	}
+
+	@Subscribe
+	public void onWidgetLoaded(WidgetLoaded e)
+	{
+		if (config.debugLogging())
+		{
+			log.info("[capture] WidgetLoaded groupId={}", e.getGroupId());
 		}
 	}
 
@@ -217,6 +277,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		sinceEnabled.addKill(gp);
 		tracked.addKill(gp);
 		overall.kills++;
+		save();
 		updatePanel();
 	}
 
@@ -226,6 +287,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		sinceEnabled.addDeath(lostGp);
 		tracked.addDeath(lostGp);
 		overall.deaths++;
+		save();
 		updatePanel();
 	}
 
@@ -263,6 +325,54 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
+	// --- Persistence (per RuneScape profile) ---
+
+	private void load()
+	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return; // no active profile (e.g. on the login screen) — don't overwrite in-memory state
+		}
+		sinceEnabled.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_SINCE, Stats.class));
+		tracked.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_TRACKED, Stats.class));
+		overall.copyFrom(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_OVERALL, Stats.class));
+		enabledAtMillis = parseLong(configManager.getRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ENABLED_AT));
+		if (enabledAtMillis <= 0)
+		{
+			enabledAtMillis = System.currentTimeMillis();
+			configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_ENABLED_AT, enabledAtMillis);
+		}
+		loaded = true;
+		updatePanel();
+	}
+
+	private void save()
+	{
+		if (!loaded)
+		{
+			return; // avoid persisting defaults before we've loaded the profile's real tallies
+		}
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_SINCE, sinceEnabled);
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_TRACKED, tracked);
+		configManager.setRSProfileConfiguration(PvpProfitTrackerConfig.GROUP, K_OVERALL, overall);
+	}
+
+	private static long parseLong(String s)
+	{
+		if (s == null)
+		{
+			return 0;
+		}
+		try
+		{
+			return Long.parseLong(s.trim());
+		}
+		catch (NumberFormatException ex)
+		{
+			return 0;
+		}
+	}
+
 	// --- Reset actions (wired to the panel buttons) ---
 
 	public void resetSession()
@@ -275,6 +385,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	public void resetTracked()
 	{
 		tracked.reset();
+		save();
 		updatePanel();
 	}
 
@@ -331,6 +442,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);
 	}
 
+	String enabledSince()
+	{
+		if (enabledAtMillis <= 0)
+		{
+			return "—";
+		}
+		return Instant.ofEpochMilli(enabledAtMillis).atZone(ZoneId.systemDefault()).toLocalDate().toString();
+	}
+
 	/** Compact gp formatting: 1.2M / 12.3K / 950. */
 	static String gp(long v)
 	{
@@ -371,8 +491,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	@Provides
-	PvpProfitTrackerConfig provideConfig(ConfigManager configManager)
+	PvpProfitTrackerConfig provideConfig(ConfigManager cm)
 	{
-		return configManager.getConfig(PvpProfitTrackerConfig.class);
+		return cm.getConfig(PvpProfitTrackerConfig.class);
 	}
 }

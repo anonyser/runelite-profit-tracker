@@ -47,4 +47,19 @@ class Stats
 		lostToDeathGp = 0;
 		consumedGp = 0;
 	}
+
+	/** Copy another tally's values in place (null clears), keeping this object's identity stable. */
+	void copyFrom(Stats o)
+	{
+		if (o == null)
+		{
+			reset();
+			return;
+		}
+		kills = o.kills;
+		deaths = o.deaths;
+		gainedGp = o.gainedGp;
+		lostToDeathGp = o.lostToDeathGp;
+		consumedGp = o.consumedGp;
+	}
 }
