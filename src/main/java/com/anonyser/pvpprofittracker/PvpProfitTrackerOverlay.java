@@ -85,6 +85,10 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		{
 			addLine("Crates (session)", Long.toString(plugin.getSession().crates), null);
 		}
+		if (config.showCurrentPoints())
+		{
+			addLine("Points (current)", plugin.currentBhPointsDisplay(), null);
+		}
 		if (config.showBaselinePoints())
 		{
 			addLine("Points (baseline)", Long.toString(plugin.getBaseline().points), null);

@@ -202,14 +202,14 @@ public interface PvpProfitTrackerConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "showSessionPoints",
-		name = "Session points",
-		description = "Bounty Hunter points gained this session (read from the game's own points value)."
-			+ MODES,
+		keyName = "showCurrentPoints",
+		name = "Current points",
+		description = "Your actual Bounty Hunter points balance, straight from the game — goes down "
+			+ "when you spend. Session/baseline track points gained instead.",
 		position = 9,
 		section = trackersSection
 	)
-	default boolean showSessionPoints()
+	default boolean showCurrentPoints()
 	{
 		return true;
 	}
@@ -224,6 +224,19 @@ public interface PvpProfitTrackerConfig extends Config
 	default boolean showBaselinePoints()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "showSessionPoints",
+		name = "Session points",
+		description = "Bounty Hunter points gained this session (read from the game's own points value)."
+			+ MODES,
+		position = 11,
+		section = trackersSection
+	)
+	default boolean showSessionPoints()
+	{
+		return true;
 	}
 
 	// --- Advanced ---

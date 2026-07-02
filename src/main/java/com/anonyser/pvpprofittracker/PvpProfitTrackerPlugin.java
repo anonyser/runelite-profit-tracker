@@ -1098,6 +1098,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return "Open bank first";
 	}
 
+	/** The player's actual Bounty Hunter points balance from the game's varp, or "—" before login. */
+	String currentBhPointsDisplay()
+	{
+		return bhPointsSynced ? Integer.toString(lastBhPoints) : "—";
+	}
+
 	/** Crate reward currently being flashed on the panel, or 0 when the 5-second window has passed. */
 	long crateFlashGp()
 	{

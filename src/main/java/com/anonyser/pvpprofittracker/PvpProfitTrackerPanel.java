@@ -122,6 +122,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 		addIfUsed(crates);
 
 		final JPanel points = titled("Bounty Hunter points");
+		if (config.showCurrentPoints())
+		{
+			points.add(row("Current", plugin.currentBhPointsDisplay(), null,
+				"Your actual points balance from the game — goes down when you spend."));
+		}
 		if (config.showBaselinePoints())
 		{
 			points.add(row("Baseline", String.valueOf(baseline.points), null, MODES_TIP));
