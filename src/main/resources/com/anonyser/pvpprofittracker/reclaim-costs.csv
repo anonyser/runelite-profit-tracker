@@ -1,0 +1,61 @@
+# Repair cost on death for untradeables that become "broken" in PvP (Perdu/armour-stand fee).
+# Source: OSRS Wiki https://oldschool.runescape.wiki/w/(broken) — verified against in-game death values.
+# Format: item name,cost   (matched case-insensitively against the item's in-game name).
+# Only used for the risk / death calculation; net worth is unaffected. Add rows as needed.
+Fire cape,150000
+Infernal cape,225000
+Ava's assembler,240000
+Imbued guthix cape,96000
+Imbued saradomin cape,96000
+Imbued zamorak cape,96000
+Fire max cape,150000
+Infernal max cape,225000
+Assembler max cape,240000
+Imbued guthix max cape,99000
+Imbued saradomin max cape,99000
+Imbued zamorak max cape,99000
+Bronze defender,1000
+Iron defender,2000
+Steel defender,2500
+Black defender,5000
+Mithril defender,15000
+Adamant defender,25000
+Rune defender,35000
+Dragon defender,240000
+Avernic defender,600000
+Void melee helm,160000
+Void mage helm,160000
+Void ranger helm,160000
+Void knight top,180000
+Elite void top,250000
+Void knight robe,180000
+Elite void robe,250000
+Void knight gloves,120000
+Void knight mace,20000
+Decorative armour gold,5000
+Decorative magic armour,5000
+Decorative ranged armour,5000
+Guthix halo,25000
+Saradomin halo,25000
+Zamorak halo,25000
+Armadyl halo,25000
+Bandos halo,25000
+Seren halo,25000
+Ancient halo,25000
+Brassica halo,25000
+Fighter hat,45000
+Ranger hat,45000
+Runner hat,40005
+Healer hat,45000
+Fighter torso,150000
+Penance skirt,20000
+Barronite mace,10500
+Masori assembler,240000
+Masori assembler max cape,240000
+Blood ancient sceptre,260962
+Smoke ancient sceptre,260962
+Ice ancient sceptre,260962
+Shadow ancient sceptre,260962
+Dizana's quiver,270000
+Blessed dizana's quiver,400000
+Dizana's max cape,400000

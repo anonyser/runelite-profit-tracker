@@ -22,6 +22,7 @@ import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
+import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
@@ -73,20 +74,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		InventoryID.DEADMAN_LOOT_INV3, InventoryID.DEADMAN_LOOT_INV4,
 	};
 
-	/**
-	 * Reclaim-on-death cost for untradeables (what it really costs to get the item back) by item id — the
-	 * game's own death value, which isn't a GE/store price, so we hard-code it. Verified in-game; extend as
-	 * needed. Only affects the risk/death calculation, not net worth.
-	 */
-	private static final Map<Integer, Long> RECLAIM_COST = new HashMap<>();
-
-	static
-	{
-		RECLAIM_COST.put(21295, 225_000L); // Infernal cape
-		RECLAIM_COST.put(12954, 240_000L); // Dragon defender
-		RECLAIM_COST.put(10551, 150_000L); // Fighter torso
-		RECLAIM_COST.put(7462, 100_000L);  // Barrows gloves
-	}
 
 	@Inject
 	private Client client;
@@ -105,6 +92,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	@Inject
 	private PvpProfitTrackerConfig config;
+
+	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
+	private final Map<String, Long> repairCosts = new HashMap<>();
 
 	// Overlay and panel are created manually (they reference the plugin) to avoid circular DI.
 	private PvpProfitTrackerOverlay overlay;
@@ -135,6 +125,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		loadRepairCosts();
 		sessionStart = Instant.now();
 		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
@@ -611,8 +602,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	/**
-	 * Per-item value lost on death: GE price if tradeable, else the untradeable's reclaim cost (from
-	 * {@link #RECLAIM_COST}), else its store value as a fallback.
+	 * Per-item value lost on death: GE price if tradeable, else the untradeable's repair-on-death cost
+	 * (from {@code reclaim-costs.csv}, matched by name), else its store value as a fallback.
 	 */
 	private long deathValue(int id)
 	{
@@ -621,18 +612,56 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return ge;
 		}
-		final Long reclaim = RECLAIM_COST.get(id);
-		if (reclaim != null)
-		{
-			return reclaim;
-		}
 		try
 		{
-			return Math.max(0, itemManager.getItemComposition(id).getPrice());
+			final ItemComposition comp = itemManager.getItemComposition(id);
+			final Long repair = repairCosts.get(comp.getName().toLowerCase());
+			if (repair != null)
+			{
+				return repair;
+			}
+			return Math.max(0, comp.getPrice());
 		}
 		catch (RuntimeException e)
 		{
 			return 0;
+		}
+	}
+
+	/** Load the untradeable repair-on-death costs from the bundled CSV (item name -> cost). */
+	private void loadRepairCosts()
+	{
+		repairCosts.clear();
+		try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+			getClass().getResourceAsStream("reclaim-costs.csv"), java.nio.charset.StandardCharsets.UTF_8)))
+		{
+			String line;
+			while ((line = r.readLine()) != null)
+			{
+				line = line.trim();
+				if (line.isEmpty() || line.startsWith("#"))
+				{
+					continue;
+				}
+				final int comma = line.lastIndexOf(',');
+				if (comma <= 0)
+				{
+					continue;
+				}
+				try
+				{
+					repairCosts.put(line.substring(0, comma).trim().toLowerCase(),
+						Long.parseLong(line.substring(comma + 1).trim()));
+				}
+				catch (NumberFormatException ignored)
+				{
+					// skip a malformed line
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			log.warn("Could not load reclaim-costs.csv", e);
 		}
 	}
 
