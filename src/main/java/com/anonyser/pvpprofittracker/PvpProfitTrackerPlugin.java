@@ -26,6 +26,7 @@ import net.runelite.api.Prayer;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
@@ -110,6 +111,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Loot-key edge detection (count a kill on the transition to "holding a key", not on login).
 	private boolean heldLootKey;
 	private boolean lootKeySynced;
+	private int deathDumpCountdown;
 
 	@Override
 	protected void startUp()
@@ -215,6 +217,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		capture("WidgetLoaded groupId=" + e.getGroupId());
 		if (e.getGroupId() == InterfaceID.DEATHKEEP)
+		{
+			deathDumpCountdown = 3; // dump a few ticks later, once the game has populated the values
+		}
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick e)
+	{
+		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
 		}
