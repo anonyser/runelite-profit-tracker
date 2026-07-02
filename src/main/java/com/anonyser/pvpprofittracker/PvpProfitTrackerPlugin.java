@@ -1424,7 +1424,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		if (lastRecordedNetWorth >= 0)
 		{
-			return fmt(lastRecordedNetWorth) + " (last recorded)";
+			return fmt(lastRecordedNetWorth) + " (saved)"; // last recorded value; live again on bank open
 		}
 		return "Open bank first";
 	}
