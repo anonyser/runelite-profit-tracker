@@ -53,7 +53,7 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		{
 			panelComponent.getChildren().add(LineComponent.builder()
 				.left("Risk")
-				.right(PvpProfitTrackerPlugin.gp(plugin.getRiskGp()))
+				.right(PvpProfitTrackerPlugin.gpFull(plugin.getRiskGp()))
 				.build());
 		}
 
@@ -61,7 +61,7 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		{
 			panelComponent.getChildren().add(LineComponent.builder()
 				.left("Net worth")
-				.right(PvpProfitTrackerPlugin.gp(plugin.getNetWorthGp()))
+				.right(PvpProfitTrackerPlugin.gpFull(plugin.getNetWorthGp()))
 				.build());
 		}
 

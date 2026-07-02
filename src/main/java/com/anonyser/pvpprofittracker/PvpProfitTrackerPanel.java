@@ -52,8 +52,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 	private JPanel liveBlock()
 	{
 		JPanel p = titled("Now");
-		p.add(row("Net worth", PvpProfitTrackerPlugin.gp(plugin.getNetWorthGp()), null));
-		p.add(row("Risk if you die", PvpProfitTrackerPlugin.gp(plugin.getRiskGp()), null));
+		p.add(row("Net worth", PvpProfitTrackerPlugin.gpFull(plugin.getNetWorthGp()), null));
+		p.add(row("Risk if you die", PvpProfitTrackerPlugin.gpFull(plugin.getRiskGp()), null));
 		return p;
 	}
 

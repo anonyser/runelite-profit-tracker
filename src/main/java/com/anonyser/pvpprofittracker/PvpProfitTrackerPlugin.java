@@ -105,7 +105,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// Live, display-only derived values.
 	private long riskGp;
-	private long gameRiskGp = -1; // the game's exact "Guide risk value" once read from the death screen
+	private long riskOffset; // game's exact death value minus our estimate — learned from the death screen
 	private long netWorthGp;
 	private long bankValueGp;
 
@@ -226,10 +226,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick e)
 	{
-		readGameRisk();
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
+			calibrateRisk();
 		}
 	}
 
@@ -423,18 +423,31 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
-	/** Displayed risk: the game's exact "Guide risk value" once we've read it, else our own estimate. */
+	/** Displayed risk: our live, real-state estimate plus the calibration learned from the death screen. */
 	private void updateRisk()
 	{
-		riskGp = gameRiskGp >= 0 ? gameRiskGp : estimateRisk();
+		riskGp = Math.max(0, estimateRisk() + riskOffset);
 		updatePanel();
 	}
 
 	/**
-	 * While the Items Kept on Death interface is open it shows a "Guide risk value" — the game's exact
-	 * amount you'd lose, correctly pricing untradeables. Read it (it updates live while open) and use it.
+	 * When the Items Kept on Death screen is open, snap our estimate to the game's exact "Guide risk value"
+	 * by learning the offset (the untradeable death-value gap I can't derive). After this, Risk tracks live
+	 * from your real state — no need to keep the screen open, and toggling its scenarios won't affect it.
 	 */
-	private void readGameRisk()
+	private void calibrateRisk()
+	{
+		final Long game = readGuideRiskValue();
+		if (game != null)
+		{
+			riskOffset = game - estimateRisk();
+			capture("calibrated riskOffset=" + riskOffset + " (game=" + game + ")");
+			updateRisk();
+		}
+	}
+
+	/** The game's current "Guide risk value" from the death screen, or null if it isn't open. */
+	private Long readGuideRiskValue()
 	{
 		for (int child = 0; child < 40; child++)
 		{
@@ -453,14 +466,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 			if (v != null)
 			{
-				if (v != gameRiskGp)
-				{
-					gameRiskGp = v;
-					updateRisk();
-				}
-				return;
+				return v;
 			}
 		}
+		return null;
 	}
 
 	private Long parseGuideRisk(Widget w)
@@ -715,6 +724,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return String.format("%.1fK", v / 1000.0);
 		}
 		return Long.toString(v);
+	}
+
+	/** Exact gp with thousands separators, e.g. 1,378,016. */
+	static String gpFull(long v)
+	{
+		return String.format("%,d", v);
 	}
 
 	private static BufferedImage icon()
