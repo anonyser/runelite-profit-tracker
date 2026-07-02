@@ -646,7 +646,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 		}
 
-		if (inventorySynced)
+		// Anything that happens with the bank open is shuffling, not acquisition — a withdrawn
+		// crate is not a new crate, and a deposited one was not opened.
+		if (inventorySynced && !bankInterfaceOpen)
 		{
 			final int delta = crateCount(now) - crateCount(lastInventory);
 			if (delta > 0)
@@ -657,7 +659,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 				updatePanel();
 				capture("received " + delta + " bounty crate(s)");
 			}
-			else if (delta < 0 && !bankInterfaceOpen)
+			else if (delta < 0)
 			{
 				long reward = 0;
 				for (final Map.Entry<Integer, Integer> en : now.entrySet())
