@@ -1,6 +1,14 @@
 package com.anonyser.pvpprofittracker;
 
 import com.google.inject.Provides;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.time.Duration;
+import java.time.Instant;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -17,6 +25,8 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,34 +61,58 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private OverlayManager overlayManager;
 
 	@Inject
-	private PvpProfitTrackerOverlay overlay;
+	private ClientToolbar clientToolbar;
 
 	@Inject
 	private PvpProfitTrackerConfig config;
 
+	// Overlay and panel are created manually (they reference the plugin) to avoid circular DI.
+	private PvpProfitTrackerOverlay overlay;
+	private PvpProfitTrackerPanel panel;
+	private NavigationButton navButton;
+
+	// Tracking scopes. session/sinceEnabled/tracked hold full profit; overall is K/D only (Edgeville import).
 	private final Stats session = new Stats();
+	private final Stats sinceEnabled = new Stats();
+	private final Stats tracked = new Stats();
+	private final Stats overall = new Stats();
+	private Instant sessionStart;
 
 	// Live, display-only derived values.
 	private long riskGp;
 	private long netWorthGp;
 	private long bankValueGp;
 
-	// Loot-key edge detection (so we count a kill on the transition to "holding a key", not on login).
+	// Loot-key edge detection (count a kill on the transition to "holding a key", not on login).
 	private boolean heldLootKey;
 	private boolean lootKeySynced;
 
 	@Override
 	protected void startUp()
 	{
+		sessionStart = Instant.now();
+		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
+		panel = new PvpProfitTrackerPanel(this);
+		navButton = NavigationButton.builder()
+			.tooltip("PvP Profit Tracker")
+			.icon(icon())
+			.priority(7)
+			.panel(panel)
+			.build();
+		clientToolbar.addNavigation(navButton);
 	}
 
 	@Override
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
-		lootKeySynced = false;
+		clientToolbar.removeNavigation(navButton);
+		overlay = null;
+		panel = null;
+		navButton = null;
 		heldLootKey = false;
+		lootKeySynced = false;
 	}
 
 	@Subscribe
@@ -86,7 +120,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING)
 		{
-			// Re-sync loot-key state on the next inventory tick rather than counting a phantom kill.
 			lootKeySynced = false;
 		}
 	}
@@ -126,11 +159,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// v0.1: book the current at-risk value as the loss. The precise kept-on-death engine
 		// (keep top 3 / 4 with Protect Item / 0 when skulled) lands after the in-game capture session.
-		final long lost = riskGp;
-		session.addDeath(lost);
+		recordDeath(riskGp);
 		if (config.debugLogging())
 		{
-			log.info("[capture] local player death, booked loss {}", lost);
+			log.info("[capture] local player death, booked loss {}", riskGp);
 		}
 	}
 
@@ -160,7 +192,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (has && !heldLootKey)
 		{
 			final long gp = valueLootKeyContents();
-			session.addKill(gp);
+			recordKill(gp);
 			if (config.debugLogging())
 			{
 				log.info("[capture] loot key received, contents valued {}", gp);
@@ -179,6 +211,24 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
+	private void recordKill(long gp)
+	{
+		session.addKill(gp);
+		sinceEnabled.addKill(gp);
+		tracked.addKill(gp);
+		overall.kills++;
+		updatePanel();
+	}
+
+	private void recordDeath(long lostGp)
+	{
+		session.addDeath(lostGp);
+		sinceEnabled.addDeath(lostGp);
+		tracked.addDeath(lostGp);
+		overall.deaths++;
+		updatePanel();
+	}
+
 	private void recomputeLiveValues()
 	{
 		final long inv = value(client.getItemContainer(InventoryID.INV));
@@ -186,6 +236,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		netWorthGp = bankValueGp + inv + worn;
 		// v0.1: risk = everything currently carried. Kept-on-death rules refine this after capture.
 		riskGp = inv + worn;
+		updatePanel();
 	}
 
 	/**
@@ -212,9 +263,49 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return total;
 	}
 
+	// --- Reset actions (wired to the panel buttons) ---
+
+	public void resetSession()
+	{
+		session.reset();
+		sessionStart = Instant.now();
+		updatePanel();
+	}
+
+	public void resetTracked()
+	{
+		tracked.reset();
+		updatePanel();
+	}
+
+	private void updatePanel()
+	{
+		if (panel != null)
+		{
+			panel.update();
+		}
+	}
+
+	// --- Accessors for the overlay / panel ---
+
 	Stats getSession()
 	{
 		return session;
+	}
+
+	Stats getSinceEnabled()
+	{
+		return sinceEnabled;
+	}
+
+	Stats getTracked()
+	{
+		return tracked;
+	}
+
+	Stats getOverall()
+	{
+		return overall;
 	}
 
 	long getRiskGp()
@@ -225,6 +316,19 @@ public class PvpProfitTrackerPlugin extends Plugin
 	long getNetWorthGp()
 	{
 		return netWorthGp;
+	}
+
+	String sessionDuration()
+	{
+		if (sessionStart == null)
+		{
+			return "0:00";
+		}
+		final long secs = Duration.between(sessionStart, Instant.now()).getSeconds();
+		final long h = secs / 3600;
+		final long m = (secs % 3600) / 60;
+		final long s = secs % 60;
+		return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);
 	}
 
 	/** Compact gp formatting: 1.2M / 12.3K / 950. */
@@ -248,6 +352,22 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return String.format("%.1fK", v / 1000.0);
 		}
 		return Long.toString(v);
+	}
+
+	private static BufferedImage icon()
+	{
+		final BufferedImage img = new BufferedImage(24, 24, BufferedImage.TYPE_INT_ARGB);
+		final Graphics2D g = img.createGraphics();
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		g.setColor(new Color(0, 200, 83));
+		g.fillOval(1, 1, 22, 22);
+		g.setColor(Color.WHITE);
+		g.setFont(new Font("SansSerif", Font.BOLD, 15));
+		final FontMetrics fm = g.getFontMetrics();
+		final String s = "$";
+		g.drawString(s, (24 - fm.stringWidth(s)) / 2, (24 - fm.getHeight()) / 2 + fm.getAscent());
+		g.dispose();
+		return img;
 	}
 
 	@Provides
