@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.Varbits;
+import net.runelite.api.WorldType;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.ChatMessage;
@@ -720,46 +722,58 @@ public class PvpProfitTrackerPlugin extends Plugin
 				}
 			}
 
-			// Consumables: an inventory drop right after the eat/drink animation, in a PvP
-			// context, books the net value used up as a loss. Dose transitions pair naturally
-			// (brew(4) out, brew(3) in = one dose); a change that nets a gain is not a consume,
-			// and the death-tick inventory wipe is excluded (that loss books as the death).
-			if (client.getTickCount() - lastConsumeTick <= 1
-				&& client.getTickCount() - lastDeathTick > 2
-				&& inPvpContext())
-			{
-				long down = 0;
-				for (final Map.Entry<Integer, Integer> en : lastInventory.entrySet())
-				{
-					final int dq = now.getOrDefault(en.getKey(), 0) - en.getValue();
-					if (dq < 0)
-					{
-						down += wealthValue(en.getKey()) * -dq;
-					}
-				}
-				long up = 0;
-				for (final Map.Entry<Integer, Integer> en : now.entrySet())
-				{
-					final int dq = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
-					if (dq > 0)
-					{
-						up += wealthValue(en.getKey()) * dq;
-					}
-				}
-				final long consumed = down - up;
-				if (consumed > 0)
-				{
-					session.addConsumed(consumed);
-					baseline.addConsumed(consumed);
-					save();
-					updatePanel();
-					capture("consumed " + consumed + " gp of supplies");
-				}
-			}
 		}
-		else
+		else if (!inventorySynced)
 		{
 			inventorySynced = true;
+		}
+
+		// Consumables: an inventory drop right after the eat/drink animation books the net value
+		// used up as a loss. The animation — not the bank guard — separates eating from
+		// depositing, so topping up HP at the bank still counts; the unit cap keeps a same-tick
+		// bulk deposit from booking as a meal. Dose transitions pair naturally (brew(4) out,
+		// brew(3) in = one dose, net zero units), and the death-tick inventory wipe is excluded
+		// (that loss books as the death).
+		if (inventorySynced
+			&& client.getTickCount() - lastConsumeTick <= 1
+			&& client.getTickCount() - lastDeathTick > 2)
+		{
+			long down = 0;
+			int unitsDown = 0;
+			for (final Map.Entry<Integer, Integer> en : lastInventory.entrySet())
+			{
+				final int dq = now.getOrDefault(en.getKey(), 0) - en.getValue();
+				if (dq < 0)
+				{
+					down += wealthValue(en.getKey()) * -dq;
+					unitsDown += -dq;
+				}
+			}
+			long up = 0;
+			int unitsUp = 0;
+			for (final Map.Entry<Integer, Integer> en : now.entrySet())
+			{
+				final int dq = en.getValue() - lastInventory.getOrDefault(en.getKey(), 0);
+				if (dq > 0)
+				{
+					up += wealthValue(en.getKey()) * dq;
+					unitsUp += dq;
+				}
+			}
+			final long consumed = down - up;
+			final int units = unitsDown - unitsUp;
+			if (consumed > 0 && units <= 2 && inPvpContext())
+			{
+				session.addConsumed(consumed);
+				baseline.addConsumed(consumed);
+				save();
+				updatePanel();
+				capture("consumed " + consumed + " gp of supplies");
+			}
+			else if (consumed > 0)
+			{
+				capture("consume skipped: gp=" + consumed + " units=" + units + " pvp=" + inPvpContext());
+			}
 		}
 		lastInventory.clear();
 		lastInventory.putAll(now);
@@ -772,8 +786,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return true;
 		}
+		final EnumSet<WorldType> world = client.getWorldType();
 		return client.getVarbitValue(Varbits.IN_WILDERNESS) == 1
-			|| client.getVarbitValue(VarbitID.THIS_IS_A_PVP_OR_BH_WORLD) == 1;
+			|| client.getVarbitValue(VarbitID.THIS_IS_A_PVP_OR_BH_WORLD) == 1
+			|| world.contains(WorldType.PVP)
+			|| world.contains(WorldType.BOUNTY);
 	}
 
 	private static int crateCount(Map<Integer, Integer> inv, int[] ids)
