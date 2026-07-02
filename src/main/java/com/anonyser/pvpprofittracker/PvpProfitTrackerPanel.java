@@ -59,7 +59,9 @@ class PvpProfitTrackerPanel extends PluginPanel
 		if (config.showActualKd())
 		{
 			kd.add(row("Actual", actual.kills + actual.deaths > 0
-				? PvpProfitTrackerPlugin.kdText(actual) : "— (visit Edgeville)", null, MODES_TIP));
+				? PvpProfitTrackerPlugin.kdText(actual) : "— (visit Edgeville)", null,
+				"The game's Kill Death Ratio window counts world PvP only, not Bounty Hunter."));
+			kd.add(note("World PvP only — Bounty Hunter kills don't count here."));
 		}
 		if (config.showBaselineKd())
 		{
@@ -193,6 +195,16 @@ class PvpProfitTrackerPanel extends PluginPanel
 		{
 			l.setToolTipText(tooltip);
 		}
+		l.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return l;
+	}
+
+	/** A small, dimmed explanatory line under a row. */
+	private JLabel note(String text)
+	{
+		final JLabel l = new JLabel("<html>" + text + "</html>");
+		l.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+		l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
 		l.setAlignmentX(Component.LEFT_ALIGNMENT);
 		return l;
 	}

@@ -92,7 +92,8 @@ public interface PvpProfitTrackerConfig extends Config
 		keyName = "showActualKd",
 		name = "Actual K/D",
 		description = "Your true in-game K/D. Load it once by opening the Kill Death Ratio window at "
-			+ "Edgeville; kills and deaths keep counting from there." + MODES,
+			+ "Edgeville; kills and deaths keep counting from there. Counts world PvP only — "
+			+ "Bounty Hunter kills/deaths aren't included in the game's number." + MODES,
 		position = 0,
 		section = trackersSection
 	)
