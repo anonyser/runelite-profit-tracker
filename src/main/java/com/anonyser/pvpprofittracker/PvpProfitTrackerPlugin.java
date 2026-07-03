@@ -17,8 +17,10 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
@@ -74,6 +76,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_BARREL = "barrel";
 	// Global (not per-profile): what a skull-slot icon id means is the game's, not the character's.
 	private static final String K_SKULL_ICON_MAP = "skullIconMap";
+	// Global: item ids the death screen proved the game protects ahead of our valuation.
+	private static final String K_KEEP_PRIORITY = "keepPriorityIds";
+	// Seeded from verified death screens; the config key accumulates newly learned ones.
+	private static final int[] KEEP_PRIORITY_DEFAULTS = {
+		33631, // Crimson kisten — kept over a 1.19M atlatl (2026-07-02); no gameval name in api 1.12.31.1
+	};
 
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
 	// unskulled players, one for skulled, pairing tier-for-tier at +8 — none of them named in the
@@ -208,6 +216,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Kept on Death screen (icon id -> skulled). Persisted globally; see calibrateSkullFromDeathScreen.
 	private final Map<Integer, Boolean> skullIconLearned = new HashMap<>();
 
+	// Item ids the game's death screen kept while our valuation ranked them below a lost item —
+	// the game's kept-on-death ranking values some untradeables far above their store value
+	// (seen: Crimson kisten protected over a 1.19M atlatl). These rank first when predicting
+	// what's kept. Persisted globally; learned in calibrateSkullFromDeathScreen.
+	private final Set<Integer> keepPriorityIds = new HashSet<>();
+
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
 	private int kdScanGroup = -1;
@@ -218,6 +232,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		loadRepairCosts();
 		loadSkullIconMap();
+		loadKeepPriority();
 		sessionStart = Instant.now();
 		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
@@ -1151,8 +1166,30 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private long computeRisk()
 	{
-		final List<long[]> items = new ArrayList<>(); // [perItemValue, stackValue]
+		final List<long[]> items = rankedCarriedItems();
 		long total = 0;
+		for (final long[] it : items)
+		{
+			total += it[1];
+		}
+		final int kept = keptCount();
+		long protectedValue = 0;
+		for (int i = 0; i < items.size() && i < kept; i++)
+		{
+			protectedValue += items.get(i)[1];
+		}
+		return Math.max(0, total - protectedValue);
+	}
+
+	/**
+	 * Carried items as [perItemValue, stackValue, itemId], ranked in the order the game protects
+	 * them: learned keep-priority items first (the game values some untradeables far above any
+	 * price we can see), then by per-item death value. Zero-value items are dropped unless the
+	 * game is known to protect them — then they still consume a kept slot.
+	 */
+	private List<long[]> rankedCarriedItems()
+	{
+		final List<long[]> items = new ArrayList<>();
 		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
 		{
 			final ItemContainer c = client.getItemContainer(cid);
@@ -1169,23 +1206,24 @@ public class PvpProfitTrackerPlugin extends Plugin
 					continue;
 				}
 				final long per = deathValue(id);
-				if (per <= 0)
+				if (per <= 0 && !keepPriorityIds.contains(id))
 				{
 					continue;
 				}
-				final long stack = per * qty;
-				total += stack;
-				items.add(new long[]{per, stack});
+				items.add(new long[]{per, per * qty, id});
 			}
 		}
-		items.sort((a, b) -> Long.compare(b[0], a[0]));
-		final int kept = keptCount();
-		long protectedValue = 0;
-		for (int i = 0; i < items.size() && i < kept; i++)
+		items.sort((a, b) ->
 		{
-			protectedValue += items.get(i)[1];
-		}
-		return Math.max(0, total - protectedValue);
+			final boolean pa = keepPriorityIds.contains((int) a[2]);
+			final boolean pb = keepPriorityIds.contains((int) b[2]);
+			if (pa != pb)
+			{
+				return pa ? -1 : 1;
+			}
+			return Long.compare(b[0], a[0]);
+		});
+		return items;
 	}
 
 	private int keptCount()
@@ -1291,12 +1329,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 				}
 			}
 		}
-		final int kept = countDeathScreenKeptItems();
-		if (carried < 5 || kept < 0)
+		final List<Integer> gameKept = deathScreenKeptItemIds();
+		if (carried < 5 || gameKept == null)
 		{
-			capture("death screen: skull calibration skipped (carried=" + carried + " kept=" + kept + ")");
+			capture("death screen: skull calibration skipped (carried=" + carried
+				+ " keptBox=" + (gameKept == null ? "not found" : gameKept.size()) + ")");
 			return;
 		}
+		final int kept = gameKept.size();
 		final boolean protect = client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
 		final Boolean skulled;
 		if (kept == (protect ? 4 : 3))
@@ -1311,48 +1351,85 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			skulled = null; // doesn't match the live Protect Item state — stale or what-if display
 		}
-		capture("death screen: kept=" + kept + " carried=" + carried + " protect=" + protect + " icon=" + icon
-			+ " -> " + (skulled == null ? "inconclusive" : skulled ? "skulled" : "unskulled"));
-		if (skulled == null || isNamedSkullIcon(icon) || skulled == isSkullIconSkulled(icon))
+		capture("death screen: kept=" + kept + " " + gameKept + " carried=" + carried + " protect=" + protect
+			+ " icon=" + icon + " -> " + (skulled == null ? "inconclusive" : skulled ? "skulled" : "unskulled"));
+		if (skulled == null)
 		{
 			return;
 		}
-		skullIconLearned.put(icon, skulled);
-		saveSkullIconMap();
-		capture("death screen: LEARNED skull icon " + icon + " = " + (skulled ? "skulled" : "unskulled"));
-		updateRisk();
-	}
-
-	/** Count the item slots in the death screen's "Items that are KEPT" section; -1 if not found. */
-	private int countDeathScreenKeptItems()
-	{
-		for (int child = 0; child < 80; child++)
+		if (!isNamedSkullIcon(icon) && skulled != isSkullIconSkulled(icon))
 		{
-			final int n = countKeptIn(client.getWidget(InterfaceID.DEATHKEEP, child), 0);
-			if (n >= 0)
-			{
-				return n;
-			}
+			skullIconLearned.put(icon, skulled);
+			saveSkullIconMap();
+			capture("death screen: LEARNED skull icon " + icon + " = " + (skulled ? "skulled" : "unskulled"));
+			updateRisk();
 		}
-		return -1;
+		learnKeepPriority(gameKept);
 	}
 
 	/**
-	 * Kept-item count if this subtree is the KEPT section (its text mentions KEPT but not the
-	 * GRAVESTONE list that sits beside it), else the first hit among its children; -1 for no hit.
+	 * Learn which items the game protects ahead of our valuation: anything actually in the kept
+	 * box that our predicted kept set missed (e.g. the Crimson kisten, which the game ranked
+	 * above a 1.19M atlatl despite a 240k store value).
 	 */
-	private int countKeptIn(Widget w, int depth)
+	private void learnKeepPriority(List<Integer> gameKept)
+	{
+		final List<long[]> ranked = rankedCarriedItems();
+		final int slots = keptCount();
+		final Set<Integer> predicted = new HashSet<>();
+		for (int i = 0; i < ranked.size() && i < slots; i++)
+		{
+			predicted.add((int) ranked.get(i)[2]);
+		}
+		boolean changed = false;
+		for (final int id : gameKept)
+		{
+			if (!predicted.contains(id) && keepPriorityIds.add(id))
+			{
+				capture("death screen: LEARNED keep-priority item " + id + " (" + itemName(id) + ")");
+				changed = true;
+			}
+		}
+		if (changed)
+		{
+			saveKeepPriority();
+			updateRisk();
+		}
+	}
+
+	/** Item ids in the death screen's "Items that are KEPT" box; null if the box wasn't found. */
+	private List<Integer> deathScreenKeptItemIds()
+	{
+		for (int child = 0; child < 80; child++)
+		{
+			final List<Integer> ids = keptIdsIn(client.getWidget(InterfaceID.DEATHKEEP, child), 0);
+			if (ids != null)
+			{
+				return ids;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * The kept box's item ids if this subtree is the KEPT section (its text mentions KEPT but not
+	 * the GRAVESTONE list beside it), else the first hit among its children; null for no hit.
+	 * Colour tags become spaces in collectText, so whitespace is normalised before matching.
+	 */
+	private List<Integer> keptIdsIn(Widget w, int depth)
 	{
 		if (w == null || depth > 4)
 		{
-			return -1;
+			return null;
 		}
 		final StringBuilder sb = new StringBuilder();
 		collectText(w, sb, 0);
-		final String text = sb.toString();
+		final String text = sb.toString().replaceAll("\\s+", " ");
 		if (text.contains("Items that are KEPT") && !text.contains("GRAVESTONE"))
 		{
-			return countItemWidgets(w, 0);
+			final List<Integer> ids = new ArrayList<>();
+			collectItemIds(w, ids, 0);
+			return ids;
 		}
 		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
 		{
@@ -1362,23 +1439,26 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 			for (final Widget kid : kids)
 			{
-				final int n = countKeptIn(kid, depth + 1);
-				if (n >= 0)
+				final List<Integer> ids = keptIdsIn(kid, depth + 1);
+				if (ids != null)
 				{
-					return n;
+					return ids;
 				}
 			}
 		}
-		return -1;
+		return null;
 	}
 
-	private int countItemWidgets(Widget w, int depth)
+	private void collectItemIds(Widget w, List<Integer> ids, int depth)
 	{
 		if (w == null || depth > 4)
 		{
-			return 0;
+			return;
 		}
-		int n = w.getItemId() > 0 ? 1 : 0;
+		if (w.getItemId() > 0)
+		{
+			ids.add(w.getItemId());
+		}
 		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
 		{
 			if (kids == null)
@@ -1387,10 +1467,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 			for (final Widget kid : kids)
 			{
-				n += countItemWidgets(kid, depth + 1);
+				collectItemIds(kid, ids, depth + 1);
 			}
 		}
-		return n;
 	}
 
 	private void loadSkullIconMap()
@@ -1431,6 +1510,45 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sb.append(e.getKey()).append('=').append(e.getValue() ? 's' : 'u');
 		}
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_SKULL_ICON_MAP, sb.toString());
+	}
+
+	private void loadKeepPriority()
+	{
+		keepPriorityIds.clear();
+		for (final int id : KEEP_PRIORITY_DEFAULTS)
+		{
+			keepPriorityIds.add(id);
+		}
+		final String s = configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_KEEP_PRIORITY);
+		if (s == null || s.isEmpty())
+		{
+			return;
+		}
+		for (final String part : s.split(","))
+		{
+			try
+			{
+				keepPriorityIds.add(Integer.parseInt(part.trim()));
+			}
+			catch (NumberFormatException ignored)
+			{
+				// hand-edited config — skip the bad entry
+			}
+		}
+	}
+
+	private void saveKeepPriority()
+	{
+		final StringBuilder sb = new StringBuilder();
+		for (final int id : keepPriorityIds)
+		{
+			if (sb.length() > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(id);
+		}
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_KEEP_PRIORITY, sb.toString());
 	}
 
 	/**
