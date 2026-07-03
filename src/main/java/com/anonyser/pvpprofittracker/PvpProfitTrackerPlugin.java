@@ -47,8 +47,10 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
@@ -80,10 +82,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// highest value each was seen protected over — a floor on the game's own ranking value for it,
 	// NOT a claim it outranks everything (a bigger item still wins the protected slot).
 	private static final String K_KEEP_PRIORITY = "keepPriorityFloors";
-	// Seeded from verified death screens; the config key accumulates newly learned ones.
-	private static final long[][] KEEP_PRIORITY_DEFAULTS = {
-		{33631, 1_186_537}, // Crimson kisten — kept over a 1,186,536 atlatl (2026-07-02); unnamed in api 1.12.31.1
-	};
+	// No known members: the one suspected case (Crimson kisten) turned out to be a genuinely
+	// tradeable 11M weapon the price feed didn't know yet. The learning stays as armor.
+	private static final long[][] KEEP_PRIORITY_DEFAULTS = {};
 
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
 	// unskulled players, one for skulled, pairing tier-for-tier at +8 — none of them named in the
@@ -141,6 +142,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private ClientThread clientThread;
 
 	@Inject
 	private ItemManager itemManager;
@@ -219,10 +223,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private final Map<Integer, Boolean> skullIconLearned = new HashMap<>();
 
 	// Ranking floors for items the game's death screen kept while our valuation ranked them below
-	// a lost item — the game's kept-on-death ranking values some untradeables far above their
-	// store value (seen: Crimson kisten protected over a 1.19M atlatl). Kept-prediction ranks by
-	// max(deathValue, floor). Persisted globally; learned in calibrateSkullFromDeathScreen.
+	// a lost item. Kept-prediction ranks by max(deathValue, floor). Persisted globally; learned
+	// in calibrateSkullFromDeathScreen.
 	private final Map<Integer, Long> keepPriorityFloor = new HashMap<>();
+
+	// User-supplied prices for items the live price feed doesn't know yet (brand-new releases);
+	// consulted only when the feed returns no price, so they go inert once the feed catches up.
+	private final Map<Integer, Long> priceOverrides = new HashMap<>();
 
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
@@ -235,6 +242,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		loadRepairCosts();
 		loadSkullIconMap();
 		loadKeepPriority();
+		loadPriceOverrides();
 		sessionStart = Instant.now();
 		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
@@ -1126,7 +1134,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private long wealthValue(int id)
 	{
-		final long ge = itemManager.getItemPrice(id);
+		final long ge = feedPrice(id);
 		if (ge > 0)
 		{
 			return ge;
@@ -1139,6 +1147,20 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return 0;
 		}
+	}
+
+	/**
+	 * Live feed price, or the user's configured override for items the feed doesn't know yet
+	 * (brand-new releases price at 0 for days — seen with the Crimson kisten, an 11M weapon).
+	 */
+	private long feedPrice(int id)
+	{
+		final long ge = itemManager.getItemPrice(id);
+		if (ge > 0)
+		{
+			return ge;
+		}
+		return priceOverrides.getOrDefault(id, 0L);
 	}
 
 	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */
@@ -1523,6 +1545,49 @@ public class PvpProfitTrackerPlugin extends Plugin
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_SKULL_ICON_MAP, sb.toString());
 	}
 
+	private void loadPriceOverrides()
+	{
+		priceOverrides.clear();
+		final String s = config.priceOverrides();
+		if (s == null || s.isEmpty())
+		{
+			return;
+		}
+		for (final String part : s.split(","))
+		{
+			final String[] kv = part.split("=");
+			if (kv.length != 2)
+			{
+				continue;
+			}
+			try
+			{
+				priceOverrides.put(Integer.parseInt(kv[0].trim()), Long.parseLong(kv[1].trim()));
+			}
+			catch (NumberFormatException ignored)
+			{
+				// malformed entry — skip it
+			}
+		}
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged e)
+	{
+		if (!PvpProfitTrackerConfig.GROUP.equals(e.getGroup()))
+		{
+			return;
+		}
+		clientThread.invoke(() ->
+		{
+			loadPriceOverrides();
+			if (client.getGameState() == GameState.LOGGED_IN)
+			{
+				updateRisk();
+			}
+		});
+	}
+
 	private void loadKeepPriority()
 	{
 		keepPriorityFloor.clear();
@@ -1579,7 +1644,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private long deathValue(int id)
 	{
-		final long ge = itemManager.getItemPrice(id);
+		final long ge = feedPrice(id);
 		if (ge > 0)
 		{
 			return ge;

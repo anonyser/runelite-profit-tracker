@@ -267,4 +267,18 @@ public interface PvpProfitTrackerConfig extends Config
 	{
 		return false;
 	}
+
+	@ConfigItem(
+		keyName = "priceOverrides",
+		name = "Price overrides",
+		description = "Prices for items the live price feed doesn't know yet (brand-new releases), "
+			+ "as itemId=gp pairs separated by commas, e.g. 33631=11025000. Only used while the "
+			+ "feed has no price for the item.",
+		position = 2,
+		section = advancedSection
+	)
+	default String priceOverrides()
+	{
+		return "";
+	}
 }
