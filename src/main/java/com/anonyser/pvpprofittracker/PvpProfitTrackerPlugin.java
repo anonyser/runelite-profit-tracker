@@ -92,15 +92,20 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Map<Integer, Long> BH_ACTIVATION_FEES = new HashMap<>();
 	static
 	{
+		// Every fee verified against the item's own wiki page (2026-07-03).
 		BH_ACTIVATION_FEES.put(27900, 5_000_000L);  // Vesta's spear (bh)
-		BH_ACTIVATION_FEES.put(27904, 50_000_000L); // Vesta's longsword (bh)
+		BH_ACTIVATION_FEES.put(27904, 10_000_000L); // Vesta's longsword (bh)
 		BH_ACTIVATION_FEES.put(27908, 10_000_000L); // Statius's warhammer (bh)
 		BH_ACTIVATION_FEES.put(27912, 5_000_000L);  // Morrigan's throwing axe (bh)
 		BH_ACTIVATION_FEES.put(27916, 10_000_000L); // Morrigan's javelin (bh)
 		BH_ACTIVATION_FEES.put(27920, 5_000_000L);  // Zuriel's staff (bh)
-		for (int id = 27831; id <= 27852; id++)     // armour + corrupted armour, 5M apiece
+		for (int id = 27831; id <= 27841; id++)     // armour, 5M apiece
 		{
 			BH_ACTIVATION_FEES.put(id, 5_000_000L);
+		}
+		for (int id = 27842; id <= 27852; id++)     // corrupted armour, 1.5M apiece
+		{
+			BH_ACTIVATION_FEES.put(id, 1_500_000L);
 		}
 	}
 
