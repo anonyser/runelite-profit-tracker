@@ -239,43 +239,72 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		loadRepairCosts();
-		loadSkullIconMap();
-		loadKeepPriority();
-		loadPriceOverrides();
-		sessionStart = Instant.now();
-		overlay = new PvpProfitTrackerOverlay(this, config);
-		overlayManager.add(overlay);
-		panel = new PvpProfitTrackerPanel(this, config);
-		navButton = NavigationButton.builder()
-			.tooltip("PvP Profit Tracker")
-			.icon(icon())
-			.priority(7)
-			.panel(panel)
-			.build();
-		clientToolbar.addNavigation(navButton);
+		try
+		{
+			loadRepairCosts();
+			loadSkullIconMap();
+			loadKeepPriority();
+			loadPriceOverrides();
+			sessionStart = Instant.now();
+			overlay = new PvpProfitTrackerOverlay(this, config);
+			overlayManager.add(overlay);
+			panel = new PvpProfitTrackerPanel(this, config);
+			navButton = NavigationButton.builder()
+				.tooltip("PvP Profit Tracker")
+				.icon(icon())
+				.priority(7)
+				.panel(panel)
+				.build();
+			clientToolbar.addNavigation(navButton);
 
-		// If enabled while already logged in, load this profile's saved tallies now (self-guarded).
-		load();
+			// If enabled while already logged in, load this profile's saved tallies now (self-guarded).
+			load();
+		}
+		catch (RuntimeException e)
+		{
+			log.error("startUp failed", e);
+			captureThrowable("startUp failed", e);
+			throw e;
+		}
 	}
 
 	@Override
 	protected void shutDown()
 	{
-		save();
-		overlayManager.remove(overlay);
-		clientToolbar.removeNavigation(navButton);
-		overlay = null;
-		panel = null;
-		navButton = null;
-		heldLootKeyCount = 0;
-		lootKeySynced = false;
-		inventorySynced = false;
-		lastInventory.clear();
-		bhPointsSynced = false;
-		bankInterfaceOpen = false;
-		bankOpenedThisLogin = false;
-		loadedProfileKey = null;
+		try
+		{
+			save();
+			overlayManager.remove(overlay);
+			clientToolbar.removeNavigation(navButton);
+			overlay = null;
+			panel = null;
+			navButton = null;
+			heldLootKeyCount = 0;
+			lootKeySynced = false;
+			inventorySynced = false;
+			lastInventory.clear();
+			bhPointsSynced = false;
+			bankInterfaceOpen = false;
+			bankOpenedThisLogin = false;
+			loadedProfileKey = null;
+		}
+		catch (RuntimeException e)
+		{
+			log.error("shutDown failed", e);
+			captureThrowable("shutDown failed", e);
+			throw e;
+		}
+	}
+
+	/** Write a full stack trace to the capture log — plugin start/stop failures are invisible otherwise. */
+	private void captureThrowable(String where, Throwable t)
+	{
+		final StringBuilder sb = new StringBuilder(where).append(": ").append(t);
+		for (final StackTraceElement el : t.getStackTrace())
+		{
+			sb.append(" | at ").append(el);
+		}
+		capture(sb.toString());
 	}
 
 	@Subscribe
