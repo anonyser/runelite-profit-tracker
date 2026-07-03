@@ -81,6 +81,29 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// tradeable 11M weapon the price feed didn't know yet. The learning stays as armor.
 	private static final long[][] KEEP_PRIORITY_DEFAULTS = {};
 
+	// Bounty Hunter ancient-warrior gear is activated by feeding it coins; on a PvP death the
+	// killer receives the activation fee and the owner keeps the inactive item — so the fee IS
+	// the item's risked value (and its wealth: deactivating refunds the coins). The live price
+	// feed knows none of these (untradeable), so without this table they'd fall back to store
+	// values and understate risk by millions. Fees as of the 29 Jan 2025 rebalance; a user
+	// price override still wins over this table. The inactive weapon forms (27902, 27906, …)
+	// stay unlisted — they hold no coins. BH imbues (dark bow/anchor/mace/dagger, 27853–27867)
+	// are a different mechanic and are deliberately not here.
+	private static final Map<Integer, Long> BH_ACTIVATION_FEES = new HashMap<>();
+	static
+	{
+		BH_ACTIVATION_FEES.put(27900, 5_000_000L);  // Vesta's spear (bh)
+		BH_ACTIVATION_FEES.put(27904, 50_000_000L); // Vesta's longsword (bh)
+		BH_ACTIVATION_FEES.put(27908, 10_000_000L); // Statius's warhammer (bh)
+		BH_ACTIVATION_FEES.put(27912, 5_000_000L);  // Morrigan's throwing axe (bh)
+		BH_ACTIVATION_FEES.put(27916, 10_000_000L); // Morrigan's javelin (bh)
+		BH_ACTIVATION_FEES.put(27920, 5_000_000L);  // Zuriel's staff (bh)
+		for (int id = 27831; id <= 27852; id++)     // armour + corrupted armour, 5M apiece
+		{
+			BH_ACTIVATION_FEES.put(id, 5_000_000L);
+		}
+	}
+
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
 	// unskulled players, one for skulled, pairing tier-for-tier at +8 — none of them named in the
 	// API. Verified in-game (2026-07-02): 21–24 unskulled (every death is followed by one of them
@@ -991,7 +1014,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/**
 	 * Price for an item: the user's configured override if set (their price wins — covers
 	 * brand-new items the feed doesn't know yet, seen with the Crimson kisten pricing at 0 for
-	 * days, and prices the user disagrees with), else the live feed price.
+	 * days, and prices the user disagrees with), else the live feed price, else the built-in
+	 * Bounty Hunter activation fee (activated gear embodies the coins fed into it).
 	 */
 	private long feedPrice(int id)
 	{
@@ -1000,7 +1024,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return override;
 		}
-		return itemManager.getItemPrice(id);
+		final long ge = itemManager.getItemPrice(id);
+		if (ge > 0)
+		{
+			return ge;
+		}
+		return BH_ACTIVATION_FEES.getOrDefault(id, 0L);
 	}
 
 	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */

@@ -29,6 +29,9 @@ Display-only. It reads game state and shows numbers; it never sends input or act
 - **Actual K/D** — read straight from the game's own stats: the Kill Death Ratio window at Edgeville,
   or the HUD on Bounty Hunter worlds, where it refreshes as you get kills. The game keeps separate
   tallies for world PvP and Bounty Hunter — the plugin shows whichever it read last.
+- **Activated Bounty Hunter gear** — ancient warriors' equipment (Vesta's, Statius's, Morrigan's,
+  Zuriel's, corrupted included) is valued at its coin activation fee automatically: that's what the
+  killer receives if you die with it, so that's what you're risking. No setup needed.
 
 ## Tracking modes
 
