@@ -1422,7 +1422,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			+ " icon=" + icon + " -> " + (skulled == null ? "inconclusive" : skulled ? "skulled" : "unskulled"));
 		if (skulled == null)
 		{
-			return;
+			return true;
 		}
 		if (!isNamedSkullIcon(icon) && skulled != isSkullIconSkulled(icon))
 		{
@@ -1432,6 +1432,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			updateRisk();
 		}
 		learnKeepPriority(gameKept);
+		return true;
 	}
 
 	/**
