@@ -72,6 +72,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_ACTUAL = "actual";
 	private static final String K_NET_WORTH = "netWorth";
 	private static final String K_BARREL = "barrel";
+	// Global (not per-profile): what a skull-slot icon id means is the game's, not the character's.
+	private static final String K_SKULL_ICON_MAP = "skullIconMap";
+
+	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
+	// unskulled players, one for skulled — none of them named in the API. 21–24 verified unskulled
+	// in-game (2026-07-02, death screen showed keep-3), 29–31 seen skulled; banded 20–25 / 26–31.
+	private static final int BH_UNSKULLED_FIRST = 20;
+	private static final int BH_UNSKULLED_LAST = 25;
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
@@ -193,6 +201,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private int lastSkullIcon = -2; // last seen skull-slot icon, only for capture logging
 
+	// Skull-slot icon ids whose skulled/unskulled reading was corrected by the game's own Items
+	// Kept on Death screen (icon id -> skulled). Persisted globally; see calibrateSkullFromDeathScreen.
+	private final Map<Integer, Boolean> skullIconLearned = new HashMap<>();
+
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
 	private int kdScanGroup = -1;
@@ -202,6 +214,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	protected void startUp()
 	{
 		loadRepairCosts();
+		loadSkullIconMap();
 		sessionStart = Instant.now();
 		overlay = new PvpProfitTrackerOverlay(this, config);
 		overlayManager.add(overlay);
@@ -433,6 +446,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
+			calibrateSkullFromDeathScreen();
 		}
 		if (lootDumpCountdown > 0 && --lootDumpCountdown == 0)
 		{
@@ -1185,13 +1199,19 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	/**
 	 * Only a genuine PK skull means "keep nothing on death". The skull-icon slot is also used
-	 * for loot-key counts, the high-risk-world marker and the fight-pit skull — none of which
-	 * change what you keep. Unknown icon ids (the game adds new combined ones faster than the
-	 * API names them — 30/31 seen in-game while skulled) are treated as skulled, the safer
-	 * direction for a risk estimate.
+	 * for loot-key counts, the high-risk-world marker, the fight-pit skull — and, on Bounty
+	 * Hunter worlds, risk-tier icons with separate unskulled and skulled bands (unnamed in the
+	 * API; see BH_UNSKULLED_FIRST). Ids the game's own Items Kept on Death screen has
+	 * contradicted are taken from the learned map instead. Anything still unknown is treated
+	 * as skulled, the safer direction for a risk estimate.
 	 */
-	private static boolean isSkullIconSkulled(int icon)
+	private boolean isSkullIconSkulled(int icon)
 	{
+		final Boolean learned = skullIconLearned.get(icon);
+		if (learned != null)
+		{
+			return learned;
+		}
 		switch (icon)
 		{
 			case SkullIcon.NONE:
@@ -1204,8 +1224,210 @@ public class PvpProfitTrackerPlugin extends Plugin
 			case SkullIcon.LOOT_KEYS_FIVE:
 				return false;
 			default:
-				return true;
+				return icon < BH_UNSKULLED_FIRST || icon > BH_UNSKULLED_LAST;
 		}
+	}
+
+	/** Icon ids the API names — their meaning is known, so the death screen never overrides them. */
+	private static boolean isNamedSkullIcon(int icon)
+	{
+		switch (icon)
+		{
+			case SkullIcon.NONE:
+			case SkullIcon.SKULL:
+			case SkullIcon.SKULL_FIGHT_PIT:
+			case SkullIcon.SKULL_HIGH_RISK:
+			case SkullIcon.FORINTHRY_SURGE:
+			case SkullIcon.SKULL_DEADMAN:
+			case SkullIcon.LOOT_KEYS_ONE:
+			case SkullIcon.LOOT_KEYS_TWO:
+			case SkullIcon.LOOT_KEYS_THREE:
+			case SkullIcon.LOOT_KEYS_FOUR:
+			case SkullIcon.LOOT_KEYS_FIVE:
+			case SkullIcon.FORINTHRY_SURGE_DEADMAN:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_ONE:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_TWO:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_THREE:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_FOUR:
+			case SkullIcon.FORINTHRY_SURGE_KEYS_FIVE:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/**
+	 * The Items Kept on Death screen is the game's own statement of what would be kept right now:
+	 * with 5+ items carried, 3/4 kept means unskulled and 0/1 means skulled. Use it to verify the
+	 * skull reading behind the Risk line and to correct icon ids the API doesn't name (the Bounty
+	 * Hunter risk-tier icons). Runs a few ticks after the interface opens, before the what-if
+	 * toggles can repaint it; a reading whose Protect Item half disagrees with the real prayer
+	 * varbit is discarded as not-current-state.
+	 */
+	private void calibrateSkullFromDeathScreen()
+	{
+		final Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			return;
+		}
+		final int icon = me.getSkullIcon();
+		int carried = 0;
+		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			final ItemContainer c = client.getItemContainer(cid);
+			if (c == null)
+			{
+				continue;
+			}
+			for (final Item it : c.getItems())
+			{
+				if (it.getId() > 0)
+				{
+					carried++;
+				}
+			}
+		}
+		final int kept = countDeathScreenKeptItems();
+		if (carried < 5 || kept < 0)
+		{
+			capture("death screen: skull calibration skipped (carried=" + carried + " kept=" + kept + ")");
+			return;
+		}
+		final boolean protect = client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
+		final Boolean skulled;
+		if (kept == (protect ? 4 : 3))
+		{
+			skulled = false;
+		}
+		else if (kept == (protect ? 1 : 0))
+		{
+			skulled = true;
+		}
+		else
+		{
+			skulled = null; // doesn't match the live Protect Item state — stale or what-if display
+		}
+		capture("death screen: kept=" + kept + " carried=" + carried + " protect=" + protect + " icon=" + icon
+			+ " -> " + (skulled == null ? "inconclusive" : skulled ? "skulled" : "unskulled"));
+		if (skulled == null || isNamedSkullIcon(icon) || skulled == isSkullIconSkulled(icon))
+		{
+			return;
+		}
+		skullIconLearned.put(icon, skulled);
+		saveSkullIconMap();
+		capture("death screen: LEARNED skull icon " + icon + " = " + (skulled ? "skulled" : "unskulled"));
+		updateRisk();
+	}
+
+	/** Count the item slots in the death screen's "Items that are KEPT" section; -1 if not found. */
+	private int countDeathScreenKeptItems()
+	{
+		for (int child = 0; child < 80; child++)
+		{
+			final int n = countKeptIn(client.getWidget(InterfaceID.DEATHKEEP, child), 0);
+			if (n >= 0)
+			{
+				return n;
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Kept-item count if this subtree is the KEPT section (its text mentions KEPT but not the
+	 * GRAVESTONE list that sits beside it), else the first hit among its children; -1 for no hit.
+	 */
+	private int countKeptIn(Widget w, int depth)
+	{
+		if (w == null || depth > 4)
+		{
+			return -1;
+		}
+		final StringBuilder sb = new StringBuilder();
+		collectText(w, sb, 0);
+		final String text = sb.toString();
+		if (text.contains("Items that are KEPT") && !text.contains("GRAVESTONE"))
+		{
+			return countItemWidgets(w, 0);
+		}
+		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
+		{
+			if (kids == null)
+			{
+				continue;
+			}
+			for (final Widget kid : kids)
+			{
+				final int n = countKeptIn(kid, depth + 1);
+				if (n >= 0)
+				{
+					return n;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private int countItemWidgets(Widget w, int depth)
+	{
+		if (w == null || depth > 4)
+		{
+			return 0;
+		}
+		int n = w.getItemId() > 0 ? 1 : 0;
+		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
+		{
+			if (kids == null)
+			{
+				continue;
+			}
+			for (final Widget kid : kids)
+			{
+				n += countItemWidgets(kid, depth + 1);
+			}
+		}
+		return n;
+	}
+
+	private void loadSkullIconMap()
+	{
+		skullIconLearned.clear();
+		final String s = configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_SKULL_ICON_MAP);
+		if (s == null || s.isEmpty())
+		{
+			return;
+		}
+		for (final String part : s.split(","))
+		{
+			final String[] kv = part.split("=");
+			if (kv.length != 2)
+			{
+				continue;
+			}
+			try
+			{
+				skullIconLearned.put(Integer.parseInt(kv[0].trim()), "s".equals(kv[1].trim()));
+			}
+			catch (NumberFormatException ignored)
+			{
+				// hand-edited config — skip the bad entry
+			}
+		}
+	}
+
+	private void saveSkullIconMap()
+	{
+		final StringBuilder sb = new StringBuilder();
+		for (final Map.Entry<Integer, Boolean> e : skullIconLearned.entrySet())
+		{
+			if (sb.length() > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(e.getKey()).append('=').append(e.getValue() ? 's' : 'u');
+		}
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_SKULL_ICON_MAP, sb.toString());
 	}
 
 	/**
