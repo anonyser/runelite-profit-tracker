@@ -232,6 +232,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private final Map<Integer, Long> priceOverrides = new HashMap<>();
 
 	private int deathDumpCountdown;
+	private boolean deathKeepCalibrated = true; // false only while an open death screen awaits a read
 	private int lootDumpCountdown;
 	private int kdScanGroup = -1;
 	private int kdScanCountdown;
@@ -321,6 +322,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			inventorySynced = false;
 			bankOpenedThisLogin = false;
 			bankInterfaceOpen = false;
+			deathKeepCalibrated = true; // stop any pending death-screen read
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
@@ -473,6 +475,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (e.getGroupId() == InterfaceID.DEATHKEEP)
 		{
 			deathDumpCountdown = 3; // dump a few ticks later, once the game has populated the values
+			deathKeepCalibrated = false; // and calibrate every tick until the kept box is readable
 		}
 		else if (e.getGroupId() == InterfaceID.WILDY_LOOT_CHEST)
 		{
@@ -494,6 +497,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			bankInterfaceOpen = false;
 		}
+		else if (e.getGroupId() == InterfaceID.DEATHKEEP && !deathKeepCalibrated)
+		{
+			capture("death screen: closed before the kept box could be read");
+			deathKeepCalibrated = true;
+		}
 	}
 
 	@Subscribe
@@ -508,7 +516,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
 		{
 			dumpDeathKeep();
-			calibrateSkullFromDeathScreen();
+		}
+		if (!deathKeepCalibrated)
+		{
+			deathKeepCalibrated = calibrateSkullFromDeathScreen();
 		}
 		if (lootDumpCountdown > 0 && --lootDumpCountdown == 0)
 		{
@@ -1353,16 +1364,17 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 * The Items Kept on Death screen is the game's own statement of what would be kept right now:
 	 * with 5+ items carried, 3/4 kept means unskulled and 0/1 means skulled. Use it to verify the
 	 * skull reading behind the Risk line and to correct icon ids the API doesn't name (the Bounty
-	 * Hunter risk-tier icons). Runs a few ticks after the interface opens, before the what-if
-	 * toggles can repaint it; a reading whose Protect Item half disagrees with the real prayer
-	 * varbit is discarded as not-current-state.
+	 * Hunter risk-tier icons). Tried every tick while the screen is open (the widgets can take a
+	 * few ticks to populate and quick peeks close the screen fast); returns true once a read
+	 * happened, false to retry next tick. A reading whose Protect Item half disagrees with the
+	 * real prayer varbit is discarded as not-current-state.
 	 */
-	private void calibrateSkullFromDeathScreen()
+	private boolean calibrateSkullFromDeathScreen()
 	{
 		final Player me = client.getLocalPlayer();
 		if (me == null)
 		{
-			return;
+			return true;
 		}
 		final int icon = me.getSkullIcon();
 		int carried = 0;
@@ -1382,11 +1394,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 		}
 		final List<Integer> gameKept = deathScreenKeptItemIds();
-		if (carried < 5 || gameKept == null)
+		if (gameKept == null)
 		{
-			capture("death screen: skull calibration skipped (carried=" + carried
-				+ " keptBox=" + (gameKept == null ? "not found" : gameKept.size()) + ")");
-			return;
+			return false; // kept box not populated yet — retry next tick while the screen is open
+		}
+		if (carried < 5)
+		{
+			capture("death screen: skull calibration skipped (carried=" + carried + ")");
+			return true;
 		}
 		final int kept = gameKept.size();
 		final boolean protect = client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
