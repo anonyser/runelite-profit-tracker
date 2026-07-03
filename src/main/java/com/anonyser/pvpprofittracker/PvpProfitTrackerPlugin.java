@@ -259,8 +259,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 			// If enabled while already logged in, load this profile's saved tallies now (self-guarded).
 			load();
+			capture("startUp complete");
 		}
-		catch (RuntimeException e)
+		catch (Error | RuntimeException e)
 		{
 			log.error("startUp failed", e);
 			captureThrowable("startUp failed", e);
@@ -287,8 +288,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 			bankInterfaceOpen = false;
 			bankOpenedThisLogin = false;
 			loadedProfileKey = null;
+			capture("shutDown complete");
 		}
-		catch (RuntimeException e)
+		catch (Error | RuntimeException e)
 		{
 			log.error("shutDown failed", e);
 			captureThrowable("shutDown failed", e);
