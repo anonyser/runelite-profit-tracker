@@ -100,11 +100,12 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showActualKd",
 		name = "Actual K/D",
-		description = "Your true in-game K/D. Load it once by opening the"
-			+ "<br>Kill Death Ratio window at Edgeville; kills and deaths"
-			+ "<br>keep counting from there. Counts world PvP only —"
-			+ "<br>Bounty Hunter kills/deaths aren't included in the"
-			+ "<br>game's number." + MODES,
+		description = "Your true in-game K/D, read straight from the game's"
+			+ "<br>own stats: the Kill Death Ratio window at Edgeville, or"
+			+ "<br>the HUD on Bounty Hunter worlds — where each kill"
+			+ "<br>refreshes it automatically. The game keeps separate"
+			+ "<br>tallies for world PvP and Bounty Hunter; the plugin"
+			+ "<br>shows whichever it read last." + MODES,
 		position = 0,
 		section = trackersSection
 	)

@@ -26,8 +26,9 @@ Display-only. It reads game state and shows numbers; it never sends input or act
   Informational only; it never feeds profit.
 - **Bounty Hunter** — crates received and their reward values, plus points: your current balance and
   points gained, read from the game's own data so kills, streaks and emblem turn-ins all count exactly.
-- **Actual K/D** — imported from the game's Kill Death Ratio window (open it once at Edgeville). Note:
-  the game's number covers world PvP only; Bounty Hunter kills aren't included in it.
+- **Actual K/D** — read straight from the game's own stats: the Kill Death Ratio window at Edgeville,
+  or the HUD on Bounty Hunter worlds, where it refreshes as you get kills. The game keeps separate
+  tallies for world PvP and Bounty Hunter — the plugin shows whichever it read last.
 
 ## Tracking modes
 
