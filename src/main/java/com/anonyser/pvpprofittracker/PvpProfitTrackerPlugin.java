@@ -257,8 +257,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 				.build();
 			clientToolbar.addNavigation(navButton);
 
-			// If enabled while already logged in, load this profile's saved tallies now (self-guarded).
-			load();
+			// If enabled while already logged in, load this profile's saved tallies now
+			// (self-guarded). Must run on the client thread: the plugin-list toggle calls
+			// startUp on the EDT, and the barrel recompute prices items through the client's
+			// item cache, which asserts client-thread.
+			clientThread.invoke(this::load);
 			capture("startUp complete");
 		}
 		catch (Error | RuntimeException e)
