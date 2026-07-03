@@ -10,6 +10,11 @@ a maintainer reviews and merges it. Same process that shipped the Digital Compas
 - [ ] **Strip the dev-only `runClient` Gradle task** from `build.gradle` in the submitted commit —
       the Hub wants the clean standard build. The test-class harness (`PvpProfitTrackerPluginTest`)
       can stay; that's the standard example-plugin pattern.
+- [ ] **Strip the dev capture system from the shipped version** — the "Debug logging" config toggle,
+      `capture()` and the dump methods (`dumpDeathKeep`, `dumpLootChest`, `dumpWidget`, the capture
+      lines sprinkled through handlers). That tooling is for the local dev build only. Keep the
+      death-screen calibration itself (skull map + keep-priority floors) — that's a real feature;
+      only its `capture(...)` logging goes. **Price overrides ships** — it's a user feature.
 - [ ] Bump `version` to `1.0.0` in `build.gradle`.
 - [ ] `./gradlew build` green on Java 11.
 - [ ] Plugin cleanly enables/disables — `shutDown()` removes the overlay, the nav button and resets

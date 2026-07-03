@@ -44,6 +44,23 @@ Everything is toggleable under **Trackers**, number formatting (full `1,428,638`
 under **Display**, and the Wilderness/PvP-only gate under **Advanced**. The side panel shows the full
 breakdown, the baseline resets, and the crate-value flash when you open a crate.
 
+### Price overrides
+
+Brand-new items can take a few days to appear in the live price feed, and until then they count as
+worthless — a just-released 11m weapon can price at 0 and vanish from your risk and net worth.
+**Price overrides** (under **Advanced**) lets you set your own prices as `itemId=gp` pairs,
+separated by commas:
+
+```
+33631=11025000, 4151=1500000
+```
+
+That prices item 33631 (Crimson kisten) at 11,025,000 gp and item 4151 (Abyssal whip) at
+1,500,000 gp. Your price wins over the live feed, so it also works when a price just looks wrong
+to you — for example, valuing something at what you actually paid. To find an item's id, open the
+item's page on the [OSRS Wiki](https://oldschool.runescape.wiki) and check the **Item ID** row of
+the infobox on the right. Changes apply as soon as you type them — no relog needed.
+
 ## Dev
 
 ```bash

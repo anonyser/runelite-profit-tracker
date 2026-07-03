@@ -271,9 +271,11 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "priceOverrides",
 		name = "Price overrides",
-		description = "Prices for items the live price feed doesn't know yet (brand-new releases), "
-			+ "as itemId=gp pairs separated by commas, e.g. 33631=11025000. Only used while the "
-			+ "feed has no price for the item.",
+		description = "Set your own price for any item, as itemId=gp pairs separated by commas. "
+			+ "Example: 33631=11025000 prices the Crimson kisten at 11,025,000 gp. Useful when a "
+			+ "brand-new item has no price in the live feed yet, or a price looks wrong to you — "
+			+ "your price wins over the feed. Find an item's id on its OSRS Wiki page (the "
+			+ "'Item ID' row of the infobox).",
 		position = 2,
 		section = advancedSection
 	)

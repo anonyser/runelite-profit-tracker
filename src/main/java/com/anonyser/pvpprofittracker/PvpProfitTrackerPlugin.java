@@ -227,8 +227,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// in calibrateSkullFromDeathScreen.
 	private final Map<Integer, Long> keepPriorityFloor = new HashMap<>();
 
-	// User-supplied prices for items the live price feed doesn't know yet (brand-new releases);
-	// consulted only when the feed returns no price, so they go inert once the feed catches up.
+	// User-supplied prices (item id -> gp) that take precedence over the live price feed — for
+	// brand-new items the feed doesn't know yet, or prices the user disagrees with.
 	private final Map<Integer, Long> priceOverrides = new HashMap<>();
 
 	private int deathDumpCountdown;
@@ -1150,17 +1150,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	/**
-	 * Live feed price, or the user's configured override for items the feed doesn't know yet
-	 * (brand-new releases price at 0 for days — seen with the Crimson kisten, an 11M weapon).
+	 * Price for an item: the user's configured override if set (their price wins — covers
+	 * brand-new items the feed doesn't know yet, seen with the Crimson kisten pricing at 0 for
+	 * days, and prices the user disagrees with), else the live feed price.
 	 */
 	private long feedPrice(int id)
 	{
-		final long ge = itemManager.getItemPrice(id);
-		if (ge > 0)
+		final Long override = priceOverrides.get(id);
+		if (override != null)
 		{
-			return ge;
+			return override;
 		}
-		return priceOverrides.getOrDefault(id, 0L);
+		return itemManager.getItemPrice(id);
 	}
 
 	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */
