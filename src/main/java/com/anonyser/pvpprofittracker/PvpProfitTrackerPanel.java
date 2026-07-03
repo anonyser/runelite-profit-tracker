@@ -60,8 +60,9 @@ class PvpProfitTrackerPanel extends PluginPanel
 		{
 			kd.add(row("Actual", actual.kills + actual.deaths > 0
 				? PvpProfitTrackerPlugin.kdText(actual) : "— (visit Edgeville)", null,
-				"The game's Kill Death Ratio window counts world PvP only, not Bounty Hunter."));
-			kd.add(note("World PvP only — Bounty Hunter kills don't count here."));
+				"Read from the game's own stats: the Edgeville Kill Death Ratio window (world PvP) "
+					+ "or the Bounty Hunter HUD, which refreshes it as you get kills."));
+			kd.add(note("From the game's stats — updates per kill at Bounty Hunter."));
 		}
 		if (config.showBaselineKd())
 		{
@@ -152,8 +153,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 		body.add(resets);
 		body.add(gap());
 
-		final JLabel tip = new JLabel("<html>To get the most accurate Kill Death Ratio, go to "
-			+ "Edgeville and open the Kill Death Ratio window.</html>");
+		final JLabel tip = new JLabel("<html>Actual K/D loads from the Kill Death Ratio window at "
+			+ "Edgeville, or updates automatically on Bounty Hunter worlds.</html>");
 		tip.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
 		tip.setBorder(new EmptyBorder(2, 8, 6, 8));
 		tip.setAlignmentX(Component.LEFT_ALIGNMENT);
