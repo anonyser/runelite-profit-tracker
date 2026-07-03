@@ -11,10 +11,15 @@ public interface PvpProfitTrackerConfig extends Config
 {
 	String GROUP = "pvpprofittracker";
 
+	// Config tooltips render as HTML (ConfigPanel wraps name + description in <html> tags), so
+	// <br> gives real line breaks — without them long tooltips run off the screen in one line.
+
 	// Shared explainer for the three tracking modes, shown on every tracker toggle.
-	String MODES = " — Actual: your true in-game value. Session: this session only, resets on restart. "
-		+ "Baseline: long-term tally that keeps saving across sessions until you reset it. "
-		+ "Reset buttons live on the plugin's side panel (the green $ icon in the sidebar).";
+	String MODES = "<br><br>Actual: your true in-game value."
+		+ "<br>Session: this session only, resets on restart."
+		+ "<br>Baseline: long-term tally that keeps saving across sessions"
+		+ "<br>until you reset it. Reset buttons live on the plugin's side"
+		+ "<br>panel (the green $ icon in the sidebar).";
 
 	@ConfigSection(
 		name = "Display",
@@ -25,8 +30,9 @@ public interface PvpProfitTrackerConfig extends Config
 
 	@ConfigSection(
 		name = "Trackers",
-		description = "Which values are shown. Live details and the baseline reset buttons are on the "
-			+ "plugin's side panel — the green $ icon in the sidebar." + MODES,
+		description = "Which values are shown. Live details and the baseline"
+			+ "<br>reset buttons are on the plugin's side panel — the green"
+			+ "<br>$ icon in the sidebar." + MODES,
 		position = 1
 	)
 	String trackersSection = "trackers";
@@ -55,7 +61,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "gpFormat",
 		name = "Number format",
-		description = "Full numbers (1,428,638) or compact (1.428M / 900M / 1.428B) for gp values.",
+		description = "Full numbers (1,428,638) or compact"
+			+ "<br>(1.428M / 900M / 1.428B) for gp values.",
 		position = 1,
 		section = displaySection
 	)
@@ -93,9 +100,11 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showActualKd",
 		name = "Actual K/D",
-		description = "Your true in-game K/D. Load it once by opening the Kill Death Ratio window at "
-			+ "Edgeville; kills and deaths keep counting from there. Counts world PvP only — "
-			+ "Bounty Hunter kills/deaths aren't included in the game's number." + MODES,
+		description = "Your true in-game K/D. Load it once by opening the"
+			+ "<br>Kill Death Ratio window at Edgeville; kills and deaths"
+			+ "<br>keep counting from there. Counts world PvP only —"
+			+ "<br>Bounty Hunter kills/deaths aren't included in the"
+			+ "<br>game's number." + MODES,
 		position = 0,
 		section = trackersSection
 	)
@@ -131,8 +140,9 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showBaselineProfit",
 		name = "Baseline profit",
-		description = "Profit since you last reset the baseline. There is no \"actual\" profit — the plugin "
-			+ "can't know your history from before it was tracking." + MODES,
+		description = "Profit since you last reset the baseline. There is no"
+			+ "<br>\"actual\" profit — the plugin can't know your history"
+			+ "<br>from before it was tracking." + MODES,
 		position = 3,
 		section = trackersSection
 	)
@@ -144,7 +154,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showSessionProfit",
 		name = "Session profit",
-		description = "Profit this session: loot keys + crate rewards − deaths − consumables." + MODES,
+		description = "Profit this session:"
+			+ "<br>loot keys + crate rewards − deaths − consumables." + MODES,
 		position = 4,
 		section = trackersSection
 	)
@@ -156,8 +167,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showRisk",
 		name = "Risk",
-		description = "What you would lose if you died right now. On death this is applied to profit "
-			+ "as a loss.",
+		description = "What you would lose if you died right now."
+			+ "<br>On death this is applied to profit as a loss.",
 		position = 5,
 		section = trackersSection
 	)
@@ -169,8 +180,9 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showNetWorth",
 		name = "Net worth",
-		description = "Total account value (bank + worn + inventory). Informational only — never counts "
-			+ "toward profit. Open your bank to record it.",
+		description = "Total account value (bank + worn + inventory)."
+			+ "<br>Informational only — never counts toward profit."
+			+ "<br>Open your bank to record it.",
 		position = 6,
 		section = trackersSection
 	)
@@ -194,7 +206,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showBaselineCrates",
 		name = "Baseline crates",
-		description = "Bounty Hunter crates received since you last reset the baseline." + MODES,
+		description = "Bounty Hunter crates received since you last reset"
+			+ "<br>the baseline." + MODES,
 		position = 8,
 		section = trackersSection
 	)
@@ -206,8 +219,9 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showCurrentPoints",
 		name = "Current points",
-		description = "Your actual Bounty Hunter points balance, straight from the game — goes down "
-			+ "when you spend. Session/baseline track points gained instead.",
+		description = "Your actual Bounty Hunter points balance, straight"
+			+ "<br>from the game — goes down when you spend."
+			+ "<br>Session/baseline track points gained instead.",
 		position = 9,
 		section = trackersSection
 	)
@@ -219,7 +233,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showBaselinePoints",
 		name = "Baseline points",
-		description = "Bounty Hunter points gained since you last reset the baseline." + MODES,
+		description = "Bounty Hunter points gained since you last reset"
+			+ "<br>the baseline." + MODES,
 		position = 10,
 		section = trackersSection
 	)
@@ -231,8 +246,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "showSessionPoints",
 		name = "Session points",
-		description = "Bounty Hunter points gained this session (read from the game's own points value)."
-			+ MODES,
+		description = "Bounty Hunter points gained this session"
+			+ "<br>(read from the game's own points value)." + MODES,
 		position = 11,
 		section = trackersSection
 	)
@@ -246,7 +261,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "pvpOnly",
 		name = "Wilderness / PvP only",
-		description = "Only count kills, deaths and consumables while in a PvP context (recommended).",
+		description = "Only count kills, deaths and consumables while in"
+			+ "<br>a PvP context (recommended).",
 		position = 0,
 		section = advancedSection
 	)
@@ -258,8 +274,8 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "debugLogging",
 		name = "Debug logging",
-		description = "Log game ids (containers, animations, widgets, chat) to help capture PvP data. "
-			+ "Leave off for normal play.",
+		description = "Log game ids (containers, animations, widgets, chat)"
+			+ "<br>to help capture PvP data. Leave off for normal play.",
 		position = 1,
 		section = advancedSection
 	)
@@ -271,11 +287,14 @@ public interface PvpProfitTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "priceOverrides",
 		name = "Price overrides",
-		description = "Set your own price for any item, as itemId=gp pairs separated by commas. "
-			+ "Example: 33631=11025000 prices the Crimson kisten at 11,025,000 gp. Useful when a "
-			+ "brand-new item has no price in the live feed yet, or a price looks wrong to you — "
-			+ "your price wins over the feed. Find an item's id on its OSRS Wiki page (the "
-			+ "'Item ID' row of the infobox).",
+		description = "Set your own price for any item, as itemId=gp pairs"
+			+ "<br>separated by commas. Example:"
+			+ "<br>33631=11025000"
+			+ "<br>prices the Crimson kisten at 11,025,000 gp."
+			+ "<br>Useful when a brand-new item has no price in the live"
+			+ "<br>feed yet, or a price looks wrong to you — your price"
+			+ "<br>wins over the feed. Find an item's id on its OSRS Wiki"
+			+ "<br>page (the 'Item ID' row of the infobox).",
 		position = 2,
 		section = advancedSection
 	)
