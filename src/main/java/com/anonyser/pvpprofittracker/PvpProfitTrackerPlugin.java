@@ -76,11 +76,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_BARREL = "barrel";
 	// Global (not per-profile): what a skull-slot icon id means is the game's, not the character's.
 	private static final String K_SKULL_ICON_MAP = "skullIconMap";
-	// Global: item ids the death screen proved the game protects ahead of our valuation.
-	private static final String K_KEEP_PRIORITY = "keepPriorityIds";
+	// Global: item ids the death screen proved the game protects ahead of our valuation, with the
+	// highest value each was seen protected over — a floor on the game's own ranking value for it,
+	// NOT a claim it outranks everything (a bigger item still wins the protected slot).
+	private static final String K_KEEP_PRIORITY = "keepPriorityFloors";
 	// Seeded from verified death screens; the config key accumulates newly learned ones.
-	private static final int[] KEEP_PRIORITY_DEFAULTS = {
-		33631, // Crimson kisten — kept over a 1.19M atlatl (2026-07-02); no gameval name in api 1.12.31.1
+	private static final long[][] KEEP_PRIORITY_DEFAULTS = {
+		{33631, 1_186_537}, // Crimson kisten — kept over a 1,186,536 atlatl (2026-07-02); unnamed in api 1.12.31.1
 	};
 
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
@@ -216,11 +218,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Kept on Death screen (icon id -> skulled). Persisted globally; see calibrateSkullFromDeathScreen.
 	private final Map<Integer, Boolean> skullIconLearned = new HashMap<>();
 
-	// Item ids the game's death screen kept while our valuation ranked them below a lost item —
-	// the game's kept-on-death ranking values some untradeables far above their store value
-	// (seen: Crimson kisten protected over a 1.19M atlatl). These rank first when predicting
-	// what's kept. Persisted globally; learned in calibrateSkullFromDeathScreen.
-	private final Set<Integer> keepPriorityIds = new HashSet<>();
+	// Ranking floors for items the game's death screen kept while our valuation ranked them below
+	// a lost item — the game's kept-on-death ranking values some untradeables far above their
+	// store value (seen: Crimson kisten protected over a 1.19M atlatl). Kept-prediction ranks by
+	// max(deathValue, floor). Persisted globally; learned in calibrateSkullFromDeathScreen.
+	private final Map<Integer, Long> keepPriorityFloor = new HashMap<>();
 
 	private int deathDumpCountdown;
 	private int lootDumpCountdown;
@@ -1182,10 +1184,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	/**
-	 * Carried items as [perItemValue, stackValue, itemId], ranked in the order the game protects
-	 * them: learned keep-priority items first (the game values some untradeables far above any
-	 * price we can see), then by per-item death value. Zero-value items are dropped unless the
-	 * game is known to protect them — then they still consume a kept slot.
+	 * Carried items as [rankValue, stackValue, itemId], sorted in the order the game protects
+	 * them. rankValue = max(per-item death value, learned keep-priority floor) — the game values
+	 * some untradeables far above any price we can see; stackValue stays our real loss value.
+	 * Zero-value items are dropped unless a floor says the game may protect them — then they
+	 * still consume a kept slot.
 	 */
 	private List<long[]> rankedCarriedItems()
 	{
@@ -1206,23 +1209,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 					continue;
 				}
 				final long per = deathValue(id);
-				if (per <= 0 && !keepPriorityIds.contains(id))
+				final long rank = Math.max(per, keepPriorityFloor.getOrDefault(id, 0L));
+				if (rank <= 0)
 				{
 					continue;
 				}
-				items.add(new long[]{per, per * qty, id});
+				items.add(new long[]{rank, per * qty, id});
 			}
 		}
-		items.sort((a, b) ->
-		{
-			final boolean pa = keepPriorityIds.contains((int) a[2]);
-			final boolean pb = keepPriorityIds.contains((int) b[2]);
-			if (pa != pb)
-			{
-				return pa ? -1 : 1;
-			}
-			return Long.compare(b[0], a[0]);
-		});
+		items.sort((a, b) -> Long.compare(b[0], a[0]));
 		return items;
 	}
 
@@ -1368,9 +1363,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	/**
-	 * Learn which items the game protects ahead of our valuation: anything actually in the kept
-	 * box that our predicted kept set missed (e.g. the Crimson kisten, which the game ranked
-	 * above a 1.19M atlatl despite a 240k store value).
+	 * Learn the game's ranking floors: an item in the kept box that our predicted kept set missed
+	 * must rank above the best item the game passed over (e.g. the Crimson kisten, kept over a
+	 * 1.19M atlatl despite a 240k store value — so its floor is 1,186,537, not infinity: a still
+	 * bigger item would win the protected slot back).
 	 */
 	private void learnKeepPriority(List<Integer> gameKept)
 	{
@@ -1381,12 +1377,27 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			predicted.add((int) ranked.get(i)[2]);
 		}
+		long bestLost = 0; // the strongest rank the game passed over — a learned item beats it
+		for (final long[] it : ranked)
+		{
+			if (!gameKept.contains((int) it[2]))
+			{
+				bestLost = Math.max(bestLost, it[0]);
+			}
+		}
 		boolean changed = false;
 		for (final int id : gameKept)
 		{
-			if (!predicted.contains(id) && keepPriorityIds.add(id))
+			if (predicted.contains(id))
 			{
-				capture("death screen: LEARNED keep-priority item " + id + " (" + itemName(id) + ")");
+				continue;
+			}
+			final long floor = bestLost + 1;
+			final Long known = keepPriorityFloor.get(id);
+			if (known == null || known < floor)
+			{
+				keepPriorityFloor.put(id, floor);
+				capture("death screen: LEARNED keep-priority " + id + " (" + itemName(id) + ") ranks above " + bestLost);
 				changed = true;
 			}
 		}
@@ -1514,10 +1525,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private void loadKeepPriority()
 	{
-		keepPriorityIds.clear();
-		for (final int id : KEEP_PRIORITY_DEFAULTS)
+		keepPriorityFloor.clear();
+		for (final long[] d : KEEP_PRIORITY_DEFAULTS)
 		{
-			keepPriorityIds.add(id);
+			keepPriorityFloor.put((int) d[0], d[1]);
 		}
 		final String s = configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_KEEP_PRIORITY);
 		if (s == null || s.isEmpty())
@@ -1526,9 +1537,20 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		for (final String part : s.split(","))
 		{
+			final String[] kv = part.split("=");
+			if (kv.length != 2)
+			{
+				continue;
+			}
 			try
 			{
-				keepPriorityIds.add(Integer.parseInt(part.trim()));
+				final int id = Integer.parseInt(kv[0].trim());
+				final long floor = Long.parseLong(kv[1].trim());
+				final Long known = keepPriorityFloor.get(id);
+				if (known == null || known < floor)
+				{
+					keepPriorityFloor.put(id, floor);
+				}
 			}
 			catch (NumberFormatException ignored)
 			{
@@ -1540,13 +1562,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void saveKeepPriority()
 	{
 		final StringBuilder sb = new StringBuilder();
-		for (final int id : keepPriorityIds)
+		for (final Map.Entry<Integer, Long> e : keepPriorityFloor.entrySet())
 		{
 			if (sb.length() > 0)
 			{
 				sb.append(',');
 			}
-			sb.append(id);
+			sb.append(e.getKey()).append('=').append(e.getValue());
 		}
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_KEEP_PRIORITY, sb.toString());
 	}
