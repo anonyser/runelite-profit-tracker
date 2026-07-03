@@ -272,19 +272,6 @@ public interface PvpProfitTrackerConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "debugLogging",
-		name = "Debug logging",
-		description = "Log game ids (containers, animations, widgets, chat)"
-			+ "<br>to help capture PvP data. Leave off for normal play.",
-		position = 1,
-		section = advancedSection
-	)
-	default boolean debugLogging()
-	{
-		return false;
-	}
-
-	@ConfigItem(
 		keyName = "priceOverrides",
 		name = "Price overrides",
 		description = "Set your own price for any item, as itemId=gp pairs"
@@ -295,7 +282,7 @@ public interface PvpProfitTrackerConfig extends Config
 			+ "<br>feed yet, or a price looks wrong to you — your price"
 			+ "<br>wins over the feed. Find an item's id on its OSRS Wiki"
 			+ "<br>page (the 'Item ID' row of the infobox).",
-		position = 2,
+		position = 1,
 		section = advancedSection
 	)
 	default String priceOverrides()

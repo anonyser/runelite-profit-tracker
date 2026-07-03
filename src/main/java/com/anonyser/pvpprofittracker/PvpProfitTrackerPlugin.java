@@ -8,12 +8,8 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -34,7 +30,6 @@ import net.runelite.api.SkullIcon;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
-import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
@@ -127,10 +122,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Pattern KILLS_RE = Pattern.compile("kills?\\s*:?\\s*([\\d,]+)");
 	private static final Pattern DEATHS_RE = Pattern.compile("deaths?\\s*:?\\s*([\\d,]+)");
 
-	// Whole words only — otherwise "crater", "hitpoints" and "pointless" spam the capture log.
-	private static final Pattern CHAT_CAPTURE_RE =
-		Pattern.compile("\\b(bounty|emblems?|points?|crates?)\\b", Pattern.CASE_INSENSITIVE);
-
 	// The eat/drink animation (confirmed in-game against food and potions alike).
 	private static final int CONSUME_ANIMATION = 829;
 
@@ -216,8 +207,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int lastConsumeTick = -10;
 	private int lastDeathTick = -10;
 
-	private int lastSkullIcon = -2; // last seen skull-slot icon, only for capture logging
-
 	// Skull-slot icon ids whose skulled/unskulled reading was corrected by the game's own Items
 	// Kept on Death screen (icon id -> skulled). Persisted globally; see calibrateSkullFromDeathScreen.
 	private final Map<Integer, Boolean> skullIconLearned = new HashMap<>();
@@ -231,9 +220,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// brand-new items the feed doesn't know yet, or prices the user disagrees with.
 	private final Map<Integer, Long> priceOverrides = new HashMap<>();
 
-	private int deathDumpCountdown;
 	private boolean deathKeepCalibrated = true; // false only while an open death screen awaits a read
-	private int lootDumpCountdown;
 	private int kdScanGroup = -1;
 	private int kdScanCountdown;
 
@@ -263,12 +250,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// startUp on the EDT, and the barrel recompute prices items through the client's
 			// item cache, which asserts client-thread.
 			clientThread.invoke(this::load);
-			capture("startUp complete");
 		}
 		catch (Error | RuntimeException e)
 		{
 			log.error("startUp failed", e);
-			captureThrowable("startUp failed", e);
 			throw e;
 		}
 	}
@@ -292,25 +277,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			bankInterfaceOpen = false;
 			bankOpenedThisLogin = false;
 			loadedProfileKey = null;
-			capture("shutDown complete");
 		}
 		catch (Error | RuntimeException e)
 		{
 			log.error("shutDown failed", e);
-			captureThrowable("shutDown failed", e);
 			throw e;
 		}
-	}
-
-	/** Write a full stack trace to the capture log — plugin start/stop failures are invisible otherwise. */
-	private void captureThrowable(String where, Throwable t)
-	{
-		final StringBuilder sb = new StringBuilder(where).append(": ").append(t);
-		for (final StackTraceElement el : t.getStackTrace())
-		{
-			sb.append(" | at ").append(el);
-		}
-		capture(sb.toString());
 	}
 
 	@Subscribe
@@ -377,8 +349,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			handleBarrelChanged(e.getItemContainer());
 		}
-
-		capture("ItemContainerChanged id=" + id);
 	}
 
 	@Subscribe
@@ -395,7 +365,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// crates being opened and items appearing. Resync fresh from the next change instead.
 		inventorySynced = false;
 		recordDeath(riskGp);
-		capture("local player death, booked loss " + riskGp);
 	}
 
 	@Subscribe
@@ -425,7 +394,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 				baseline.addPoints(delta);
 				save();
 				updatePanel();
-				capture("bounty hunter points +" + delta + " (now " + now + ")");
 			}
 		}
 		else
@@ -434,22 +402,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		lastBhPoints = now;
 	}
-
-	@Subscribe
-	public void onChatMessage(ChatMessage e)
-	{
-		// Capture-only: cross-check the points varp and harvest crate/emblem message formats.
-		if (!config.debugLogging() || e.getMessage() == null)
-		{
-			return;
-		}
-		if (CHAT_CAPTURE_RE.matcher(e.getMessage()).find())
-		{
-			capture("chat[" + e.getType() + "] " + e.getMessage());
-		}
-	}
-
-	// --- Capture helpers: only active with debug logging on, to harvest ids for the in-game session ---
 
 	@Subscribe
 	public void onAnimationChanged(AnimationChanged e)
@@ -464,22 +416,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				bookChug();
 			}
-			capture("local player animation=" + e.getActor().getAnimation());
 		}
 	}
 
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded e)
 	{
-		capture("WidgetLoaded groupId=" + e.getGroupId());
 		if (e.getGroupId() == InterfaceID.DEATHKEEP)
 		{
-			deathDumpCountdown = 3; // dump a few ticks later, once the game has populated the values
-			deathKeepCalibrated = false; // and calibrate every tick until the kept box is readable
-		}
-		else if (e.getGroupId() == InterfaceID.WILDY_LOOT_CHEST)
-		{
-			lootDumpCountdown = 2;
+			deathKeepCalibrated = false; // calibrate every tick until the kept box is readable
 		}
 		else if (e.getGroupId() == InterfaceID.BANKMAIN)
 		{
@@ -497,9 +442,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			bankInterfaceOpen = false;
 		}
-		else if (e.getGroupId() == InterfaceID.DEATHKEEP && !deathKeepCalibrated)
+		else if (e.getGroupId() == InterfaceID.DEATHKEEP)
 		{
-			capture("death screen: closed before the kept box could be read");
 			deathKeepCalibrated = true;
 		}
 	}
@@ -513,105 +457,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
 		updateRisk();
-		if (deathDumpCountdown > 0 && --deathDumpCountdown == 0)
-		{
-			dumpDeathKeep();
-		}
 		if (!deathKeepCalibrated)
 		{
 			deathKeepCalibrated = calibrateSkullFromDeathScreen();
 		}
-		if (lootDumpCountdown > 0 && --lootDumpCountdown == 0)
-		{
-			dumpLootChest();
-		}
 		if (kdScanCountdown > 0 && --kdScanCountdown == 0)
 		{
 			maybeImportActualKd(kdScanGroup);
-		}
-	}
-
-	/** Append a line to ~/.runelite/pvp-capture.log (and the client log) when debug logging is on. */
-	private void capture(String msg)
-	{
-		if (!config.debugLogging())
-		{
-			return;
-		}
-		log.info("[capture] {}", msg);
-		final File f = new File(System.getProperty("user.home"), ".runelite/pvp-capture.log");
-		try (FileWriter w = new FileWriter(f, true))
-		{
-			w.write(LocalTime.now().withNano(0) + "  " + msg + System.lineSeparator());
-		}
-		catch (IOException ignored)
-		{
-			// best-effort capture logging
-		}
-	}
-
-	/** Dump the game's Items Kept on Death data so Risk can be wired to the exact value it shows. */
-	private void dumpDeathKeep()
-	{
-		capture("=== ITEMS KEPT ON DEATH ===");
-		final ItemContainer kept = client.getItemContainer(InventoryID.DEATHKEEP);
-		if (kept != null)
-		{
-			for (final Item it : kept.getItems())
-			{
-				if (it.getId() > 0)
-				{
-					capture(String.format("kept: id=%d qty=%d name=%s ge=%d",
-						it.getId(), it.getQuantity(), itemName(it.getId()), itemManager.getItemPrice(it.getId())));
-				}
-			}
-		}
-		for (int child = 0; child < 80; child++)
-		{
-			dumpWidget(client.getWidget(InterfaceID.DEATHKEEP, child), String.valueOf(child), 0);
-		}
-		for (final int cid : new int[]{InventoryID.INV, InventoryID.WORN})
-		{
-			final ItemContainer c = client.getItemContainer(cid);
-			if (c == null)
-			{
-				continue;
-			}
-			for (final Item it : c.getItems())
-			{
-				if (it.getId() > 0)
-				{
-					capture(String.format("carry(%d): id=%d qty=%d name=%s ge=%d storeValue=%d",
-						cid, it.getId(), it.getQuantity(), itemName(it.getId()),
-						itemManager.getItemPrice(it.getId()), itemManager.getItemComposition(it.getId()).getPrice()));
-				}
-			}
-		}
-	}
-
-	private void dumpWidget(Widget w, String tag, int depth)
-	{
-		if (w == null || depth > 4)
-		{
-			return;
-		}
-		final String t = w.getText();
-		final int itemId = w.getItemId();
-		if ((t != null && !t.trim().isEmpty()) || itemId > 0)
-		{
-			final String text = t == null ? "" : t.replaceAll("<[^>]*>", "").trim();
-			capture("widget[" + tag + "] text=\"" + text + "\""
-				+ (itemId > 0 ? " itemId=" + itemId + " qty=" + w.getItemQuantity() + " name=" + itemName(itemId) : ""));
-		}
-		for (final Widget[] kids : new Widget[][]{w.getStaticChildren(), w.getDynamicChildren(), w.getNestedChildren()})
-		{
-			if (kids != null)
-			{
-				for (int i = 0; i < kids.length; i++)
-				{
-					dumpWidget(kids[i], tag + "." + i, depth + 1);
-				}
-			}
 		}
 	}
 
@@ -624,43 +476,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		catch (RuntimeException e)
 		{
 			return "?";
-		}
-	}
-
-	/** Dump the Wilderness Loot Chest contents + value so we can wire realizing the gain on claim. */
-	private void dumpLootChest()
-	{
-		capture("=== WILDERNESS LOOT CHEST ===");
-		long total = 0;
-		for (final int container : LOOT_KEY_CONTAINERS)
-		{
-			final ItemContainer c = client.getItemContainer(container);
-			if (c == null)
-			{
-				continue;
-			}
-			for (final Item it : c.getItems())
-			{
-				if (it.getId() > 0)
-				{
-					final long v = wealthValue(it.getId()) * it.getQuantity();
-					total += v;
-					capture(String.format("loot(%d): id=%d qty=%d name=%s value=%d",
-						container, it.getId(), it.getQuantity(), itemName(it.getId()), v));
-				}
-			}
-		}
-		capture("loot chest total value = " + total);
-		final ItemContainer inv = client.getItemContainer(InventoryID.INV);
-		if (inv != null)
-		{
-			for (final int key : LOOT_KEYS)
-			{
-				if (inv.contains(key))
-				{
-					capture("holding loot key id=" + key);
-				}
-			}
 		}
 	}
 
@@ -691,15 +506,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final Matcher d = DEATHS_RE.matcher(text);
 		if (!k.find() || !d.find())
 		{
-			capture("kd-import: ratio window (group " + groupId + ") but no kills/deaths parsed: "
-				+ text.replace('\n', '|'));
 			return;
 		}
 		actual.kills = Long.parseLong(k.group(1).replace(",", ""));
 		actual.deaths = Long.parseLong(d.group(1).replace(",", ""));
 		save();
 		updatePanel();
-		capture("kd-import: actual K/D " + actual.kills + "/" + actual.deaths + " from group " + groupId);
+		log.debug("imported actual K/D {}/{} from interface {}", actual.kills, actual.deaths, groupId);
 	}
 
 	private void collectText(Widget w, StringBuilder sb, int depth)
@@ -754,13 +567,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				recordKill();
 			}
-			capture("kill: +" + kills + " loot key(s), now holding " + count);
 		}
 		else if (count < heldLootKeyCount && pendingLootValue > 0)
 		{
 			// Claimed loot — realize the snapshotted chest value once, then reset.
 			recordGain(pendingLootValue);
-			capture("claimed loot, realized gain " + pendingLootValue);
 			pendingLootValue = 0;
 		}
 		heldLootKeyCount = count;
@@ -802,7 +613,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 				baseline.addCrates(tierDelta);
 				save();
 				updatePanel();
-				capture("received " + tierDelta + " bounty crate(s)");
 			}
 
 			// An open = any crate consumed while items appear. A crate's face value never books
@@ -837,7 +647,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 					crateFlashUntil = System.currentTimeMillis() + 5_000;
 					save();
 					updatePanel();
-					capture("opened bounty crate, reward " + reward);
 				}
 			}
 
@@ -887,11 +696,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 				baseline.addConsumed(consumed);
 				save();
 				updatePanel();
-				capture("consumed " + consumed + " gp of supplies");
-			}
-			else if (consumed > 0)
-			{
-				capture("consume skipped: gp=" + consumed + " units=" + units + " pvp=" + inPvpContext());
 			}
 		}
 		lastInventory.clear();
@@ -914,17 +718,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 				if (it.getId() > 0 && it.getQuantity() > 0)
 				{
 					now.merge(it.getId(), it.getQuantity(), Integer::sum);
-					capture("barrel: id=" + it.getId() + " qty=" + it.getQuantity()
-						+ " name=" + itemName(it.getId()));
 				}
 			}
 		}
-		final long oldGp = barrelGp;
 		barrelDoses.clear();
 		barrelDoses.putAll(now);
 		recomputeBarrelGp();
 		saveBarrel();
-		capture("barrel value " + oldGp + " -> " + barrelGp);
 		recomputeLiveValues();
 		updatePanel();
 	}
@@ -934,8 +734,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		if (barrelDoses.isEmpty())
 		{
-			capture("chug detected but barrel contents unknown — open your bank once to sync");
-			return;
+			return; // contents unknown until a bank visit transmits the container
 		}
 		long value = 0;
 		for (final Map.Entry<Integer, Integer> en : barrelDoses.entrySet())
@@ -954,11 +753,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 			session.addConsumed(value);
 			baseline.addConsumed(value);
 			save();
-			capture("chugged barrel: one dose of each, " + value + " gp");
-		}
-		else if (value > 0)
-		{
-			capture("chug outside PvP context, not booked (" + value + " gp)");
 		}
 		updatePanel();
 	}
@@ -1212,14 +1006,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/** Displayed risk: value you'd lose if you died right now. Fully live — recomputed on every change. */
 	private void updateRisk()
 	{
-		final Player me = client.getLocalPlayer();
-		final int icon = me == null ? -1 : me.getSkullIcon();
-		if (icon != lastSkullIcon)
-		{
-			lastSkullIcon = icon;
-			capture("skull icon -> " + icon
-				+ " (risk treats as " + (isSkullIconSkulled(icon) ? "skulled" : "unskulled") + ")");
-		}
 		final long newRisk = computeRisk();
 		if (newRisk != riskGp)
 		{
@@ -1400,8 +1186,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		if (carried < 5)
 		{
-			capture("death screen: skull calibration skipped (carried=" + carried + ")");
-			return true;
+			return true; // too few items to pin the skull state (kept counts are ambiguous)
 		}
 		final int kept = gameKept.size();
 		final boolean protect = client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
@@ -1418,8 +1203,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			skulled = null; // doesn't match the live Protect Item state — stale or what-if display
 		}
-		capture("death screen: kept=" + kept + " " + gameKept + " carried=" + carried + " protect=" + protect
-			+ " icon=" + icon + " -> " + (skulled == null ? "inconclusive" : skulled ? "skulled" : "unskulled"));
 		if (skulled == null)
 		{
 			return true;
@@ -1428,7 +1211,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			skullIconLearned.put(icon, skulled);
 			saveSkullIconMap();
-			capture("death screen: LEARNED skull icon " + icon + " = " + (skulled ? "skulled" : "unskulled"));
+			log.debug("death screen: learned skull icon {} = {}", icon, skulled ? "skulled" : "unskulled");
 			updateRisk();
 		}
 		learnKeepPriority(gameKept);
@@ -1470,7 +1253,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			if (known == null || known < floor)
 			{
 				keepPriorityFloor.put(id, floor);
-				capture("death screen: LEARNED keep-priority " + id + " (" + itemName(id) + ") ranks above " + bestLost);
+				log.debug("death screen: learned keep-priority {} ({}) ranks above {}", id, itemName(id), bestLost);
 				changed = true;
 			}
 		}
