@@ -66,5 +66,4 @@ the infobox on the right. Changes apply as soon as you type them — no relog ne
 
 ```bash
 ./gradlew build           # compile + test (Java 11)
-./gradlew runClient       # launch a dev RuneLite client with the plugin loaded
 ```
