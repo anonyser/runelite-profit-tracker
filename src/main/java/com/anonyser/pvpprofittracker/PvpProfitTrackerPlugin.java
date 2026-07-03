@@ -76,10 +76,13 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final String K_SKULL_ICON_MAP = "skullIconMap";
 
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
-	// unskulled players, one for skulled — none of them named in the API. 21–24 verified unskulled
-	// in-game (2026-07-02, death screen showed keep-3), 29–31 seen skulled; banded 20–25 / 26–31.
-	private static final int BH_UNSKULLED_FIRST = 20;
-	private static final int BH_UNSKULLED_LAST = 25;
+	// unskulled players, one for skulled, pairing tier-for-tier at +8 — none of them named in the
+	// API. Verified in-game (2026-07-02): 21–24 unskulled (every death is followed by one of them
+	// on respawn; the death screen showed keep-3 on 22), 29–32 skulled during fights. Only the
+	// verified unskulled band is whitelisted; 25–28 (never observed) stay default-skulled until
+	// the death screen teaches them (see calibrateSkullFromDeathScreen).
+	private static final int BH_UNSKULLED_FIRST = 21;
+	private static final int BH_UNSKULLED_LAST = 24;
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {
