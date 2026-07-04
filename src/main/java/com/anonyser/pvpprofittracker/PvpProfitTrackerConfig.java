@@ -382,6 +382,23 @@ public interface PvpProfitTrackerConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "autoFocusTarget",
+		name = "Auto-focus new target",
+		description = "The moment a Bounty Hunter target is assigned, focus"
+			+ "<br>them as the opponent and open this plugin's side panel"
+			+ "<br>so their gear, risk and combat stats are one glance away."
+			+ "<br>If PvP Performance Tracker is installed, turn its"
+			+ "<br>auto-open feature off so the two don't fight over the"
+			+ "<br>sidebar.",
+		position = 8,
+		section = opponentSection
+	)
+	default boolean autoFocusTarget()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "oppShowNotes",
 		name = "Overlay: assumption notes",
 		description = "The small grey lines explaining what the estimate"

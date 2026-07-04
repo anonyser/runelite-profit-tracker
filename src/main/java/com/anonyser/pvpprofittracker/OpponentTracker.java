@@ -330,7 +330,11 @@ class OpponentTracker
 		snapshot = new Snapshot(name, visible, skulled, tier, tierFloor, total, riskGp, smiteGp,
 			kept, equippedIds, equippedNames, equippedGp, seenOnlyIds, seenOnlyNames, seenOnlyGp,
 			overhead, hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.PRAYER),
-			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS));
+			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
+			hiscoreLevel(HiscoreSkill.ATTACK), hiscoreLevel(HiscoreSkill.STRENGTH),
+			hiscoreLevel(HiscoreSkill.RANGED), hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_HUNTER),
+			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
+			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT));
 
 		final int changeHash = java.util.Objects.hash(name, visible, skulled, tier, riskGp,
 			smiteGp, java.util.Arrays.hashCode(equippedIds), java.util.Arrays.hashCode(seenOnlyIds),
@@ -379,12 +383,22 @@ class OpponentTracker
 		final int prayerLevel;
 		final int magicLevel;
 		final int hitpointsLevel;
+		final int attackLevel;
+		final int strengthLevel;
+		final int rangedLevel;
+		final int bhTargetKills;   // Bounty Hunter (hunter) score, -1 unranked
+		final int bhRogueKills;    // Bounty Hunter (rogue) score, -1 unranked
+		final int colosseumGlory;  // -1 unranked
+		final int zukKc;           // TzKal-Zuk kill count, -1 unranked
+		final int solHereditKc;    // Sol Heredit kill count, -1 unranked
 
 		Snapshot(String name, boolean visible, boolean skulled, String tier, long tierFloor,
 			long totalSeenGp, long riskGp, long smiteGp, int keptAssumed, int[] equippedIds,
 			String[] equippedNames, long[] equippedGp, int[] seenOnlyIds, String[] seenOnlyNames,
 			long[] seenOnlyGp, HeadIcon overhead, int defenceLevel, int prayerLevel,
-			int magicLevel, int hitpointsLevel)
+			int magicLevel, int hitpointsLevel, int attackLevel, int strengthLevel,
+			int rangedLevel, int bhTargetKills, int bhRogueKills, int colosseumGlory,
+			int zukKc, int solHereditKc)
 		{
 			this.name = name;
 			this.visible = visible;
@@ -406,6 +420,14 @@ class OpponentTracker
 			this.prayerLevel = prayerLevel;
 			this.magicLevel = magicLevel;
 			this.hitpointsLevel = hitpointsLevel;
+			this.attackLevel = attackLevel;
+			this.strengthLevel = strengthLevel;
+			this.rangedLevel = rangedLevel;
+			this.bhTargetKills = bhTargetKills;
+			this.bhRogueKills = bhRogueKills;
+			this.colosseumGlory = colosseumGlory;
+			this.zukKc = zukKc;
+			this.solHereditKc = solHereditKc;
 		}
 	}
 }

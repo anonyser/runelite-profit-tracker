@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
+import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
@@ -58,6 +59,7 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.Text;
 import net.runelite.client.ui.overlay.OverlayManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -207,6 +209,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private CombatCalc combatCalc;
 	// Written on the client thread each tick; volatile so the overlay/panel read a coherent one.
 	private volatile CombatCalc.Estimate combatEstimate;
+	// Auto-focus: the target name last read off the BH HUD, and one still awaiting a scene match.
+	private String lastBhTargetName;
+	private String pendingAutoFocusName;
 
 	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
 	// player's true in-game K/D (imported at Edgeville, kept counting from there).
@@ -349,6 +354,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			bankOpenedThisLogin = false;
 			bankInterfaceOpen = false;
 			deathKeepCalibrated = true; // stop any pending death-screen read
+			lastBhTargetName = null;
+			pendingAutoFocusName = null;
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
@@ -581,6 +588,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// Re-estimated every tick: the player's own gear, prayers and boosts are inputs too,
 			// and they change without any opponent-side event firing.
 			combatEstimate = combatCalc.estimate(opponentTracker.snapshot());
+			if (config.autoFocusTarget())
+			{
+				maybeAutoFocusBhTarget();
+			}
 		}
 		if (!deathKeepCalibrated)
 		{
@@ -602,6 +613,87 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return "?";
 		}
+	}
+
+	// --- Auto-focus a new Bounty Hunter target ---
+
+	/**
+	 * The BH HUD (interface 90, PVP_ICONS) carries the target's name, but the API names no child
+	 * for it — so every text in the group is scanned: a "Target: name" line wins outright, else
+	 * any line that equals the name of another player in the scene. On a NEW name the plugin's
+	 * side panel opens immediately (the PvP Performance Tracker behaviour Mark asked to inherit),
+	 * and the player is focused as soon as they can be matched in the scene.
+	 */
+	private void maybeAutoFocusBhTarget()
+	{
+		final StringBuilder sb = new StringBuilder();
+		for (int child = 0; child < 80; child++)
+		{
+			collectText(client.getWidget(InterfaceID.PVP_ICONS, child), sb, 0);
+		}
+		String name = null;
+		for (final String rawLine : sb.toString().split("\n"))
+		{
+			final String line = rawLine.trim();
+			if (line.isEmpty())
+			{
+				continue;
+			}
+			if (line.toLowerCase().startsWith("target"))
+			{
+				final String rest = line.replaceFirst("(?i)target:?", "").trim();
+				if (!rest.isEmpty() && !"none".equalsIgnoreCase(rest))
+				{
+					// May carry a combat level suffix — the name is what precedes " (".
+					final int paren = rest.indexOf(" (");
+					name = Text.toJagexName(paren > 0 ? rest.substring(0, paren) : rest);
+					break;
+				}
+			}
+			else if (scenePlayerNamed(line) != null)
+			{
+				name = Text.toJagexName(line);
+				break;
+			}
+		}
+		if (name == null)
+		{
+			lastBhTargetName = null; // no readable target — re-arm for the next assignment
+			return;
+		}
+		if (!name.equals(lastBhTargetName))
+		{
+			lastBhTargetName = name;
+			pendingAutoFocusName = name;
+			log.debug("BH target detected on the HUD: {}", name);
+			SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
+		}
+		if (pendingAutoFocusName != null)
+		{
+			final Player p = scenePlayerNamed(pendingAutoFocusName);
+			if (p != null)
+			{
+				pendingAutoFocusName = null;
+				opponentTracker.focus(p);
+				updatePanel();
+				log.debug("BH target auto-focused: {}", name);
+			}
+		}
+	}
+
+	private Player scenePlayerNamed(String name)
+	{
+		final String jagex = Text.toJagexName(name);
+		final Player me = client.getLocalPlayer();
+		for (final Player p : client.getTopLevelWorldView().players())
+		{
+			if (p != null && p != me && p.getName() != null
+				&& Text.toJagexName(Text.removeTags(p.getName())).equalsIgnoreCase(jagex))
+			{
+				return p;
+			}
+		}
+		return null;
 	}
 
 	// --- Actual K/D import (the Kill Death Ratio window at Edgeville) ---

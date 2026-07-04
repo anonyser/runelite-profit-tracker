@@ -29,6 +29,54 @@ class CombatCalc
 {
 	/** Damage scales with Strength and melee strength bonus — unique among ranged weapons. */
 	private static final int ECLIPSE_ATLATL = 29000;
+	private static final int DARK_BOW = 11235;
+
+	/**
+	 * Special-attack MAX-HIT modifiers for the common PvP spec weapons, from the wiki's Special
+	 * attacks page (accuracy modifiers are not modelled — this feeds the max-hit line only).
+	 * Encoding: {damage multiplier, hits, show-as-total}. show-as-total = 1 means the number is
+	 * the whole combo's ceiling (claws) rather than a per-hit value. Weapons not listed show
+	 * their normal max hit while the spec bar is lit.
+	 */
+	private static final java.util.Map<Integer, double[]> SPEC_MAX = new java.util.HashMap<>();
+	static
+	{
+		final double[] dds = {1.15, 2, 0};
+		SPEC_MAX.put(1215, dds);  // dragon dagger
+		SPEC_MAX.put(1231, dds);  // dragon dagger(p)
+		SPEC_MAX.put(5680, dds);  // dragon dagger(p+)
+		SPEC_MAX.put(5698, dds);  // dragon dagger(p++)
+		SPEC_MAX.put(13652, new double[]{2.0, 4, 1});   // dragon claws — combo ceiling
+		SPEC_MAX.put(1434, new double[]{1.5, 1, 0});    // dragon mace
+		SPEC_MAX.put(21009, new double[]{1.25, 1, 0});  // dragon sword
+		final double[] dKnife = {1.0, 2, 0};
+		SPEC_MAX.put(22804, dKnife); // dragon knife
+		SPEC_MAX.put(22806, dKnife); // dragon knife(p)
+		SPEC_MAX.put(22808, dKnife); // dragon knife(p+)
+		final double[] gmaul = {1.0, 1, 0};
+		SPEC_MAX.put(4153, gmaul);   // granite maul (instant, no modifier)
+		SPEC_MAX.put(12848, gmaul);  // granite maul (or)
+		SPEC_MAX.put(24225, gmaul);  // ornate maul
+		SPEC_MAX.put(11802, new double[]{1.375, 1, 0}); // Armadyl godsword
+		SPEC_MAX.put(11804, new double[]{1.21, 1, 0});  // Bandos godsword
+		SPEC_MAX.put(27690, new double[]{1.5, 1, 0});   // Voidwaker (guaranteed, up to 150%)
+		SPEC_MAX.put(DARK_BOW, new double[]{1.3, 2, 0}); // dark bow (1.5 with dragon arrows)
+		SPEC_MAX.put(19481, new double[]{1.25, 1, 0});  // heavy ballista
+		SPEC_MAX.put(13576, new double[]{1.5, 1, 0});   // dragon warhammer
+		SPEC_MAX.put(21003, new double[]{1.0, 1, 0});   // elder maul (accuracy-only spec)
+		final double[] abyDagger = {0.85, 2, 0};
+		SPEC_MAX.put(13265, abyDagger); // abyssal dagger
+		SPEC_MAX.put(13267, abyDagger); // abyssal dagger(p)
+		SPEC_MAX.put(13269, abyDagger); // abyssal dagger(p+)
+		SPEC_MAX.put(13271, abyDagger); // abyssal dagger(p++)
+		SPEC_MAX.put(27908, new double[]{1.25, 1, 0});  // Statius's warhammer (bh)
+		SPEC_MAX.put(22622, new double[]{1.25, 1, 0});  // Statius's warhammer
+		SPEC_MAX.put(27904, new double[]{1.2, 1, 0});   // Vesta's longsword (bh)
+		SPEC_MAX.put(22613, new double[]{1.2, 1, 0});   // Vesta's longsword
+		SPEC_MAX.put(20849, new double[]{1.0, 1, 0});   // dragon thrownaxe (accuracy-only)
+		SPEC_MAX.put(3204, new double[]{1.1, 1, 0});    // dragon halberd
+		SPEC_MAX.put(23987, new double[]{1.1, 1, 0});   // crystal halberd
+	}
 
 	/** Reads all game state on the client thread; the returned estimate is immutable. */
 	private final Client client;
@@ -57,9 +105,14 @@ class CombatCalc
 		final boolean defenceAssumed;   // hiscores didn't answer (yet) — level 99 assumed
 		final int oppDefence;     // defence level used (post-assumption, pre-potion)
 		final int oppPrayer;      // prayer level used for the best-prayer assumption
+		final boolean specActive; // the special-attack bar is lit
+		final int specMaxHit;     // spec ceiling (-1 = weapon not in the table)
+		final int specHits;       // hits per spec (2 for dds, etc.)
+		final boolean specTotal;  // specMaxHit is the whole combo's ceiling (claws)
 
 		Estimate(Style style, String styleName, double hitChance, int maxHit,
-			boolean overheadCounters, boolean defenceAssumed, int oppDefence, int oppPrayer)
+			boolean overheadCounters, boolean defenceAssumed, int oppDefence, int oppPrayer,
+			boolean specActive, int specMaxHit, int specHits, boolean specTotal)
 		{
 			this.style = style;
 			this.styleName = styleName;
@@ -69,6 +122,37 @@ class CombatCalc
 			this.defenceAssumed = defenceAssumed;
 			this.oppDefence = oppDefence;
 			this.oppPrayer = oppPrayer;
+			this.specActive = specActive;
+			this.specMaxHit = specMaxHit;
+			this.specHits = specHits;
+			this.specTotal = specTotal;
+		}
+
+		/** True when the max-hit line should show the special-attack number. */
+		boolean specShown()
+		{
+			return specActive && specMaxHit >= 0;
+		}
+
+		/**
+		 * Display text for the max-hit line, spec- and overhead-aware, shared by the overlay and
+		 * the side panel: "34", "34 (20 prayed)", "2× 27", "up to 68 (40 prayed)", "spell-based".
+		 */
+		String maxHitText()
+		{
+			if (maxHit < 0)
+			{
+				return "spell-based";
+			}
+			final int shown = specShown() ? specMaxHit : maxHit;
+			String text = specShown() && specTotal ? "up to " + shown
+				: specShown() && specHits > 1 ? specHits + "× " + shown
+				: Integer.toString(shown);
+			if (overheadCounters)
+			{
+				text += " (" + afterOverhead(shown) + " prayed)";
+			}
+			return text;
 		}
 	}
 
@@ -170,8 +254,31 @@ class CombatCalc
 				break;
 		}
 
+		// With the special-attack bar lit, the max-hit line switches to the spec's ceiling for
+		// the known PvP spec weapons (in-game feedback: "press spec, see the spec number").
+		final boolean specActive = client.getVarpValue(VarPlayerID.SA_ATTACK) == 1;
+		int specMaxHit = -1;
+		int specHits = 1;
+		boolean specTotal = false;
+		if (specActive && maxHit >= 0)
+		{
+			final int weaponId = wornWeaponId();
+			final double[] spec = SPEC_MAX.get(weaponId);
+			if (spec != null)
+			{
+				double mult = spec[0];
+				if (weaponId == DARK_BOW && wornAmmoIsDragonArrow())
+				{
+					mult = 1.5; // the dark bow spec jumps from 30% to 50% with dragon arrows
+				}
+				specMaxHit = (int) (maxHit * mult);
+				specHits = (int) spec[1];
+				specTotal = spec[2] == 1;
+			}
+		}
+
 		return new Estimate(style, styleName, chance, maxHit, overheadCounters,
-			defenceAssumed, oppDefence, oppPrayer);
+			defenceAssumed, oppDefence, oppPrayer, specActive, specMaxHit, specHits, specTotal);
 	}
 
 	// --- The player's selected combat style, from the game's own weapon-style data ---
@@ -278,6 +385,26 @@ class CombatCalc
 		final Item weapon = worn == null ? null
 			: worn.getItem(net.runelite.api.EquipmentInventorySlot.WEAPON.getSlotIdx());
 		return weapon == null ? -1 : weapon.getId();
+	}
+
+	private boolean wornAmmoIsDragonArrow()
+	{
+		final ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		final Item ammo = worn == null ? null
+			: worn.getItem(net.runelite.api.EquipmentInventorySlot.AMMO.getSlotIdx());
+		if (ammo == null || ammo.getId() <= 0)
+		{
+			return false;
+		}
+		try
+		{
+			return itemManager.getItemComposition(ammo.getId()).getName()
+				.toLowerCase().contains("dragon arrow");
+		}
+		catch (RuntimeException e)
+		{
+			return false;
+		}
 	}
 
 	private Bonuses worn()

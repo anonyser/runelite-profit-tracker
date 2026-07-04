@@ -201,6 +201,34 @@ class PvpProfitTrackerPanel extends PluginPanel
 			o.add(row("Status", opp.skulled ? "Skulled" : "Unskulled",
 				opp.skulled ? config.lossColor() : config.profitColor(), null));
 		}
+		// Combat-stat preview (hiscores). Levels first, then the PvP/PvM records that read a
+		// player at a glance — records hide when unranked, levels show a dash until the lookup.
+		o.add(row("Atk / Str / Def",
+			lvl(opp.attackLevel) + " / " + lvl(opp.strengthLevel) + " / " + lvl(opp.defenceLevel),
+			null, "From the hiscores — dashes until the lookup answers."));
+		o.add(row("Rng / Mag / HP",
+			lvl(opp.rangedLevel) + " / " + lvl(opp.magicLevel) + " / " + lvl(opp.hitpointsLevel),
+			null, "From the hiscores — dashes until the lookup answers."));
+		o.add(row("Prayer", lvl(opp.prayerLevel), null,
+			"Drives the defensive-prayer assumption in your hit chance."));
+		if (opp.bhTargetKills >= 0 || opp.bhRogueKills >= 0)
+		{
+			o.add(row("BH kills", "T " + kc(opp.bhTargetKills) + "  ·  R " + kc(opp.bhRogueKills),
+				null, "Bounty Hunter kills from the hiscores: as Target's hunter · as rogue."));
+		}
+		if (opp.colosseumGlory > 0)
+		{
+			o.add(row("Colosseum glory", Integer.toString(opp.colosseumGlory), null, null));
+		}
+		if (opp.zukKc > 0)
+		{
+			o.add(row("TzKal-Zuk KC", Integer.toString(opp.zukKc), null, null));
+		}
+		if (opp.solHereditKc > 0)
+		{
+			o.add(row("Sol Heredit KC", Integer.toString(opp.solHereditKc), null, null));
+		}
+
 		o.add(row("Risk (est)", plugin.fmt(opp.riskGp), null,
 			"Visible + previously seen gear, minus assumed protected items; "
 				+ "at least the BH tier minimum when a tier icon shows."));
@@ -224,12 +252,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 		{
 			o.add(row("Hit chance (" + est.styleName + ")", Math.round(est.hitChance * 100) + "%", null,
 				"Estimate against their hiscore levels and visible gear."));
-			o.add(row("Max hit", est.maxHit >= 0
-				? (est.overheadCounters
-					? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
-					: Integer.toString(est.maxHit))
-				: "spell-based", null,
-				"Your current setup: gear, boosts, prayers and combat style."));
+			o.add(row(est.specShown() ? "Max hit (spec)" : "Max hit", est.maxHitText(), null,
+				"Your current setup: gear, boosts, prayers and combat style."
+					+ " With the special-attack bar lit this shows the spec's ceiling"
+					+ " for known PvP spec weapons."));
 			o.add(note("Assumes opponent is using best available defensive prayer and potion boosts"
 				+ (est.defenceAssumed ? ", and 99 Defence until hiscores answer." : ".")));
 		}
@@ -237,6 +263,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 		o.add(button("Clear opponent", plugin::clearOpponent));
 		body.add(o);
 		body.add(gap());
+	}
+
+	/** A hiscore level for display: dash until the lookup answers. */
+	private static String lvl(int level)
+	{
+		return level > 0 ? Integer.toString(level) : "—";
+	}
+
+	/** A hiscore activity score for display: dash when unranked. */
+	private static String kc(int score)
+	{
+		return score >= 0 ? Integer.toString(score) : "—";
 	}
 
 	/**

@@ -118,16 +118,7 @@ class OpponentRiskOverlay extends OverlayPanel
 			}
 			if (config.oppShowMaxHit())
 			{
-				if (est.maxHit >= 0)
-				{
-					line("Your max hit", est.overheadCounters
-						? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
-						: Integer.toString(est.maxHit), null);
-				}
-				else
-				{
-					line("Your max hit", "spell-based", null);
-				}
+				line(est.specShown() ? "Your max hit (spec)" : "Your max hit", est.maxHitText(), null);
 			}
 			if (config.oppShowNotes())
 			{
