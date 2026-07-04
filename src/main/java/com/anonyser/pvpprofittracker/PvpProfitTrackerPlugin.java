@@ -166,6 +166,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Trailing dose marker in potion names, e.g. "Saradomin brew(4)".
 	private static final Pattern DOSES_RE = Pattern.compile("\\((\\d)\\)\\s*$");
 
+	// The BH hub's target readout: "Name (combatLevel)" — format captured live 2026-07-04.
+	private static final Pattern BH_TARGET_LINE = Pattern.compile("(.+) \\((\\d{1,3})\\)");
+
 	// Drinking from the chugging barrel (confirmed in-game; distinct from the eat/drink 829).
 	private static final int CHUG_ANIMATION = 11645;
 
@@ -686,6 +689,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 			return;
 		}
 		String name = null;
+		final Player me = client.getLocalPlayer();
+		final String myName = me == null || me.getName() == null ? ""
+			: Text.toJagexName(Text.removeTags(me.getName()));
 		for (final String rawLine : hudText.split("\n"))
 		{
 			String line = rawLine.trim();
@@ -701,7 +707,20 @@ public class PvpProfitTrackerPlugin extends Plugin
 					continue;
 				}
 			}
-			// The header shows the bare name, sometimes with a combat-level suffix.
+			// The target readout is "Name (combatLevel)" — live-captured format. Trusting it
+			// needs no scene presence: an assignment was once watched expire while the target
+			// stayed beyond render distance the whole walk in.
+			final Matcher m = BH_TARGET_LINE.matcher(line);
+			if (m.matches())
+			{
+				final String candidate = Text.toJagexName(m.group(1).trim());
+				if (!candidate.equalsIgnoreCase(myName))
+				{
+					name = candidate;
+					break;
+				}
+			}
+			// Fallback: any hub line that IS the name of a player in the scene.
 			final int paren = line.indexOf(" (");
 			final String candidate = paren > 0 ? line.substring(0, paren) : line;
 			if (scenePlayerNamed(candidate) != null)
@@ -744,6 +763,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// out of render range and back must not keep re-opening the panel mid-fight.
 			if (!name.equals(opponentTracker.focusedName()))
 			{
+				opponentTracker.focusName(name); // hiscore preview starts before they render
+				updatePanel();
 				SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
 			}
 		}

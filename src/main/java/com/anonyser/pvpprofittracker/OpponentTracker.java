@@ -108,6 +108,26 @@ class OpponentTracker
 		refresh(p);
 	}
 
+	/**
+	 * Focus a player by name alone — a Bounty Hunter target read off the HUD before they're
+	 * anywhere near render distance. The hiscore lookup starts immediately (it only needs the
+	 * name), so the stat preview fills while the player closes the distance; gear follows the
+	 * moment they first render, through the normal scene-match path.
+	 */
+	void focusName(String targetName)
+	{
+		final String jagex = Text.toJagexName(targetName);
+		if (jagex.equals(name))
+		{
+			return;
+		}
+		clear();
+		name = jagex;
+		lastSeenTick = client.getTickCount();
+		log.debug("opponent focused by name, not yet in scene: {}", jagex);
+		recompute();
+	}
+
 	void clear()
 	{
 		name = null;
