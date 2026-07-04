@@ -3,6 +3,7 @@ package com.anonyser.pvpprofittracker;
 import net.runelite.api.Client;
 import net.runelite.api.EnumComposition;
 import net.runelite.api.EnumID;
+import net.runelite.api.HeadIcon;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.ParamID;
@@ -13,6 +14,7 @@ import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.game.ItemEquipmentStats;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.game.ItemStats;
 
 /**
  * Hit-chance and max-hit estimates against the focused opponent, using the standard OSRS combat
@@ -116,7 +118,7 @@ class CombatCalc
 				final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.STRENGTH),
 					strengthPrayerMult(), stance.strengthBonus);
 				maxHit = maxHit(effStr, mine.str);
-				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.MELEE;
+				overheadCounters = opp.overhead == HeadIcon.MELEE;
 				break;
 			}
 			case RANGED:
@@ -128,9 +130,9 @@ class CombatCalc
 				final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
 					rangedStrengthPrayerMult(), stance.rangedBonus);
 				maxHit = maxHit(effStr, mine.rstr);
-				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.RANGED
-					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MAGE
-					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MELEE;
+				overheadCounters = opp.overhead == HeadIcon.RANGED
+					|| opp.overhead == HeadIcon.RANGE_MAGE
+					|| opp.overhead == HeadIcon.RANGE_MELEE;
 				break;
 			}
 			case MAGIC:
@@ -142,8 +144,8 @@ class CombatCalc
 				final int effMagicDef = (int) (0.7 * (oppMagic + 8) + 0.3 * effDef);
 				chance = hitChance(attackRoll(effAcc, mine.amagic), attackRoll(effMagicDef, theirs.dmagic));
 				maxHit = -1; // spell-dependent — shown as such rather than guessed
-				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.MAGIC
-					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MAGE;
+				overheadCounters = opp.overhead == HeadIcon.MAGIC
+					|| opp.overhead == HeadIcon.RANGE_MAGE;
 				break;
 			}
 			default:
@@ -285,7 +287,7 @@ class CombatCalc
 
 	private void add(Bonuses b, int itemId)
 	{
-		final net.runelite.client.game.ItemStats stats = itemManager.getItemStats(itemId);
+		final ItemStats stats = itemManager.getItemStats(itemId);
 		final ItemEquipmentStats e = stats == null ? null : stats.getEquipment();
 		if (e == null)
 		{

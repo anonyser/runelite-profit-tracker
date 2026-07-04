@@ -95,6 +95,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 			body.add(gap());
 		}
 
+		if (config.opponentRisk())
+		{
+			addOpponentSection();
+		}
+
 		if (config.showNetWorth())
 		{
 			final JPanel p = titled("Net worth");
@@ -162,6 +167,100 @@ class PvpProfitTrackerPanel extends PluginPanel
 
 		body.revalidate();
 		body.repaint();
+	}
+
+	/**
+	 * The focused-opponent section: name, skull/tier, estimated risk and smite value, the gear
+	 * icons (worn now + seen earlier in the fight), the assumptions, and the hit-chance estimate.
+	 * Everything shown comes from the tracker's snapshot — names and values were resolved on the
+	 * client thread; only the async icons are requested here.
+	 */
+	private void addOpponentSection()
+	{
+		final OpponentTracker.Snapshot opp = plugin.opponentSnapshot();
+		final JPanel o = titled("Opponent risk");
+		if (opp == null)
+		{
+			o.add(note("Right-click a player and choose <b>Risk</b> to track "
+				+ "their visible gear and estimated risk here."));
+			body.add(o);
+			body.add(gap());
+			return;
+		}
+
+		o.add(row("Opponent", opp.name + (opp.visible ? "" : " (out of sight)"), null,
+			"Cleared automatically after ~5 minutes out of sight."));
+		if (opp.tier != null)
+		{
+			o.add(row("BH tier", opp.tier + (opp.skulled ? " (skulled)" : ""),
+				opp.skulled ? config.lossColor() : config.profitColor(),
+				"Bounty Hunter risk-tier icon — the game's statement of their minimum total risk."));
+		}
+		else
+		{
+			o.add(row("Status", opp.skulled ? "Skulled" : "Unskulled",
+				opp.skulled ? config.lossColor() : config.profitColor(), null));
+		}
+		o.add(row("Risk (est)", plugin.fmt(opp.riskGp), null,
+			"Visible + previously seen gear, minus assumed protected items; "
+				+ "at least the BH tier minimum when a tier icon shows."));
+		o.add(row("Smite value (est)", plugin.fmt(opp.smiteGp), null,
+			"What losing Protect Item would additionally expose."));
+
+		o.add(gearGrid(opp.equippedIds, opp.equippedNames, opp.equippedGp, "worn now"));
+		if (opp.seenOnlyIds.length > 0)
+		{
+			o.add(note("Seen earlier this fight:"));
+			o.add(gearGrid(opp.seenOnlyIds, opp.seenOnlyNames, opp.seenOnlyGp, "seen earlier this fight"));
+		}
+
+		o.add(note(opp.skulled
+			? "Assuming their most valuable item is protected (skulled, Protect Item assumed active)."
+			: "Assuming top " + opp.keptAssumed + " items are protected because opponent appears "
+				+ "unskulled with Protect Item active."));
+
+		final CombatCalc.Estimate est = plugin.combatEstimate();
+		if (est != null && est.style != CombatCalc.Style.OTHER)
+		{
+			o.add(row("Hit chance (" + est.styleName + ")", Math.round(est.hitChance * 100) + "%", null,
+				"Estimate against their hiscore levels and visible gear."));
+			o.add(row("Max hit", est.maxHit >= 0
+				? (est.overheadCounters
+					? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
+					: Integer.toString(est.maxHit))
+				: "spell-based", null,
+				"Your current setup: gear, boosts, prayers and combat style."));
+			o.add(note("Assumes opponent is using best available defensive prayer and potion boosts"
+				+ (est.defenceAssumed ? ", and 99 Defence until hiscores answer." : ".")));
+		}
+
+		o.add(button("Clear opponent", plugin::clearOpponent));
+		body.add(o);
+		body.add(gap());
+	}
+
+	/**
+	 * Item icons, five per row (a FlowLayout would report a one-row height inside this BoxLayout
+	 * column and clip the wrap); each icon's tooltip carries the name and value.
+	 */
+	private JPanel gearGrid(int[] ids, String[] names, long[] values, String context)
+	{
+		final JPanel grid = new JPanel(new java.awt.GridLayout(0, 5, 2, 2));
+		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+		for (int i = 0; i < ids.length; i++)
+		{
+			if (ids[i] <= 0)
+			{
+				continue;
+			}
+			final JLabel icon = new JLabel();
+			icon.setToolTipText("<html>" + (names[i] == null ? "?" : names[i]) + "<br>"
+				+ plugin.fmt(values[i]) + " — " + context + "</html>");
+			plugin.itemIcon(ids[i]).addTo(icon);
+			grid.add(icon);
+		}
+		return grid;
 	}
 
 	/** Add a section only if any rows were enabled for it (the title label is child 0). */

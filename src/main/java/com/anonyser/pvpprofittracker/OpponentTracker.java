@@ -55,6 +55,7 @@ class OpponentTracker
 	private final Client client;
 	private final HiscoreManager hiscoreManager;
 	private final PvpProfitTrackerPlugin plugin;
+	private final Runnable onChange; // fired when the published estimate materially changes
 
 	// All state is written on the client thread only. Readers off it use the snapshot.
 	private String name; // sanitized display name of the focused opponent; null = no focus
@@ -68,12 +69,15 @@ class OpponentTracker
 
 	/** Immutable view of the current estimate, safe to read from the EDT (side panel). */
 	private volatile Snapshot snapshot;
+	private int lastChangeHash;
 
-	OpponentTracker(Client client, HiscoreManager hiscoreManager, PvpProfitTrackerPlugin plugin)
+	OpponentTracker(Client client, HiscoreManager hiscoreManager, PvpProfitTrackerPlugin plugin,
+		Runnable onChange)
 	{
 		this.client = client;
 		this.hiscoreManager = hiscoreManager;
 		this.plugin = plugin;
+		this.onChange = onChange;
 	}
 
 	Snapshot snapshot()
@@ -113,6 +117,11 @@ class OpponentTracker
 		hiscore = null;
 		visible = false;
 		snapshot = null;
+		if (lastChangeHash != 0)
+		{
+			lastChangeHash = 0;
+			onChange.run();
+		}
 	}
 
 	boolean isFocused(Player p)
@@ -300,10 +309,36 @@ class OpponentTracker
 			seenOnlyIds[i] = seenOnly.get(i);
 		}
 
+		// Names and values are resolved here, on the client thread — the side panel builds on
+		// the EDT, where the item cache must not be touched.
+		final String[] equippedNames = new String[equippedIds.length];
+		final long[] equippedGp = new long[equippedIds.length];
+		for (int i = 0; i < equippedIds.length; i++)
+		{
+			equippedNames[i] = equippedIds[i] > 0 ? plugin.itemName(equippedIds[i]) : null;
+			equippedGp[i] = equippedIds[i] > 0 ? plugin.deathValue(equippedIds[i]) : 0;
+		}
+		final String[] seenOnlyNames = new String[seenOnlyIds.length];
+		final long[] seenOnlyGp = new long[seenOnlyIds.length];
+		for (int i = 0; i < seenOnlyIds.length; i++)
+		{
+			seenOnlyNames[i] = plugin.itemName(seenOnlyIds[i]);
+			seenOnlyGp[i] = plugin.deathValue(seenOnlyIds[i]);
+		}
+
 		snapshot = new Snapshot(name, visible, skulled, tier, tierFloor, total, riskGp, smiteGp,
-			kept, equippedIds, seenOnlyIds, overhead,
-			hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.PRAYER),
+			kept, equippedIds, equippedNames, equippedGp, seenOnlyIds, seenOnlyNames, seenOnlyGp,
+			overhead, hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.PRAYER),
 			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS));
+
+		final int changeHash = java.util.Objects.hash(name, visible, skulled, tier, riskGp,
+			smiteGp, java.util.Arrays.hashCode(equippedIds), java.util.Arrays.hashCode(seenOnlyIds),
+			snapshot.defenceLevel, snapshot.prayerLevel);
+		if (changeHash != lastChangeHash)
+		{
+			lastChangeHash = changeHash;
+			onChange.run();
+		}
 	}
 
 	/** 0–4 tier index for a BH risk-tier icon (either band), or -1 when the icon is not one. */
@@ -332,9 +367,13 @@ class OpponentTracker
 		final long riskGp;      // estimated loss on death, protections applied
 		final long smiteGp;     // extra exposed if Protect Item is lost
 		final int keptAssumed;  // protected slots assumed (4 unskulled, 1 skulled)
-		final int[] equippedIds;  // VISIBLE_SLOTS order, -1 = empty
-		final int[] seenOnlyIds;  // seen this fight, not currently worn
-		final HeadIcon overhead;  // their overhead prayer, if any
+		final int[] equippedIds;      // VISIBLE_SLOTS order, -1 = empty
+		final String[] equippedNames; // parallel to equippedIds (null where empty)
+		final long[] equippedGp;      // parallel to equippedIds
+		final int[] seenOnlyIds;      // seen this fight, not currently worn
+		final String[] seenOnlyNames; // parallel to seenOnlyIds
+		final long[] seenOnlyGp;      // parallel to seenOnlyIds
+		final HeadIcon overhead;      // their overhead prayer, if any
 		final int defenceLevel;   // -1 until the hiscore lookup answers
 		final int prayerLevel;
 		final int magicLevel;
@@ -342,7 +381,8 @@ class OpponentTracker
 
 		Snapshot(String name, boolean visible, boolean skulled, String tier, long tierFloor,
 			long totalSeenGp, long riskGp, long smiteGp, int keptAssumed, int[] equippedIds,
-			int[] seenOnlyIds, HeadIcon overhead, int defenceLevel, int prayerLevel,
+			String[] equippedNames, long[] equippedGp, int[] seenOnlyIds, String[] seenOnlyNames,
+			long[] seenOnlyGp, HeadIcon overhead, int defenceLevel, int prayerLevel,
 			int magicLevel, int hitpointsLevel)
 		{
 			this.name = name;
@@ -355,7 +395,11 @@ class OpponentTracker
 			this.smiteGp = smiteGp;
 			this.keptAssumed = keptAssumed;
 			this.equippedIds = equippedIds;
+			this.equippedNames = equippedNames;
+			this.equippedGp = equippedGp;
 			this.seenOnlyIds = seenOnlyIds;
+			this.seenOnlyNames = seenOnlyNames;
+			this.seenOnlyGp = seenOnlyGp;
 			this.overhead = overhead;
 			this.defenceLevel = defenceLevel;
 			this.prayerLevel = prayerLevel;

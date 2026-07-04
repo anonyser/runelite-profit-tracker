@@ -280,7 +280,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
-			opponentTracker = new OpponentTracker(client, hiscoreManager, this);
+			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updatePanel);
 			combatCalc = new CombatCalc(client, itemManager);
 			opponentOverlay = new OpponentRiskOverlay(this, config, opponentTracker);
 			overlayManager.add(opponentOverlay);
@@ -1216,6 +1216,25 @@ public class PvpProfitTrackerPlugin extends Plugin
 	CombatCalc.Estimate combatEstimate()
 	{
 		return combatEstimate;
+	}
+
+	/** Item sprite for the side panel — async, so safe to request from the EDT. */
+	net.runelite.client.util.AsyncBufferedImage itemIcon(int id)
+	{
+		return itemManager.getImage(id);
+	}
+
+	/** Drop the focused opponent. Safe from any thread (the panel's Clear button runs on the EDT). */
+	void clearOpponent()
+	{
+		clientThread.invoke(() ->
+		{
+			if (opponentTracker != null)
+			{
+				opponentTracker.clear();
+			}
+			combatEstimate = null;
+		});
 	}
 
 	/** Whether the Protect Item prayer is active right now. Game-thread only (varbit read). */
