@@ -27,6 +27,9 @@ import net.runelite.client.game.ItemStats;
  */
 class CombatCalc
 {
+	/** Damage scales with Strength and melee strength bonus — unique among ranged weapons. */
+	private static final int ECLIPSE_ATLATL = 29000;
+
 	/** Reads all game state on the client thread; the returned estimate is immutable. */
 	private final Client client;
 	private final ItemManager itemManager;
@@ -123,13 +126,27 @@ class CombatCalc
 			}
 			case RANGED:
 			{
-				styleName = "Ranged";
 				final int effAcc = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
 					rangedAccuracyPrayerMult(), stance.rangedBonus);
 				chance = hitChance(attackRoll(effAcc, mine.arange), attackRoll(effDef, theirs.drange));
-				final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
-					rangedStrengthPrayerMult(), stance.rangedBonus);
-				maxHit = maxHit(effStr, mine.rstr);
+				if (wornWeaponId() == ECLIPSE_ATLATL)
+				{
+					// The atlatl's damage rides the STRENGTH level (visible boosts included) and
+					// the gear's MELEE strength bonus, while ranged prayers boost both accuracy
+					// and damage and melee prayers do nothing — the wiki-documented one-off
+					// among ranged weapons. Its accuracy side stays normal ranged.
+					styleName = "Ranged (atlatl)";
+					final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.STRENGTH),
+						rangedStrengthPrayerMult(), stance.rangedBonus);
+					maxHit = maxHit(effStr, mine.str);
+				}
+				else
+				{
+					styleName = "Ranged";
+					final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
+						rangedStrengthPrayerMult(), stance.rangedBonus);
+					maxHit = maxHit(effStr, mine.rstr);
+				}
 				overheadCounters = opp.overhead == HeadIcon.RANGED
 					|| opp.overhead == HeadIcon.RANGE_MAGE
 					|| opp.overhead == HeadIcon.RANGE_MELEE;
@@ -253,6 +270,14 @@ class CombatCalc
 		int astab, aslash, acrush, amagic, arange;
 		int dstab, dslash, dcrush, dmagic, drange;
 		int str, rstr;
+	}
+
+	private int wornWeaponId()
+	{
+		final ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		final Item weapon = worn == null ? null
+			: worn.getItem(net.runelite.api.EquipmentInventorySlot.WEAPON.getSlotIdx());
+		return weapon == null ? -1 : weapon.getId();
 	}
 
 	private Bonuses worn()
