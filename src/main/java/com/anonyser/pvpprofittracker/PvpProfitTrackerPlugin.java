@@ -459,7 +459,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	/**
 	 * Add a "Risk" option to every other player on an open right-click menu. Selecting it focuses
 	 * that player in the opponent-risk overlay/panel. Added only when the menu is already open, so
-	 * it can never hijack a left click mid-fight.
+	 * it can never hijack a left click — and inserted directly BELOW that player's topmost option:
+	 * Attack must stay first (in-game feedback — an entry above Attack invites deadly misclicks).
 	 */
 	@Subscribe
 	public void onMenuOpened(MenuOpened e)
@@ -468,17 +469,28 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return;
 		}
-		final Set<Player> offered = new HashSet<>();
-		for (final MenuEntry entry : e.getMenuEntries())
+		// Entries render top-down from the END of the array, so a player's topmost option is
+		// their highest index. Inserting AT that index puts Risk immediately below it.
+		final MenuEntry[] entries = e.getMenuEntries();
+		final Map<Player, Integer> topEntry = new HashMap<>();
+		for (int i = 0; i < entries.length; i++)
 		{
-			final Player p = entry.getPlayer();
-			if (p == null || p == client.getLocalPlayer() || !offered.add(p))
+			final Player p = entries[i].getPlayer();
+			if (p != null && p != client.getLocalPlayer())
 			{
-				continue;
+				topEntry.put(p, i);
 			}
-			client.getMenu().createMenuEntry(-1)
+		}
+		// Insert highest index first: every later insertion happens strictly below, so the
+		// remaining recorded indexes stay valid.
+		final List<Map.Entry<Player, Integer>> order = new ArrayList<>(topEntry.entrySet());
+		order.sort((a, b) -> b.getValue() - a.getValue());
+		for (final Map.Entry<Player, Integer> en : order)
+		{
+			final Player p = en.getKey();
+			client.getMenu().createMenuEntry(en.getValue())
 				.setOption("Risk")
-				.setTarget(entry.getTarget())
+				.setTarget(entries[en.getValue()].getTarget())
 				.setType(MenuAction.RUNELITE)
 				.onClick(me ->
 				{

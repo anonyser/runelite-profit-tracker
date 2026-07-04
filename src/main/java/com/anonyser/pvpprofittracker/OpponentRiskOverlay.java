@@ -60,63 +60,88 @@ class OpponentRiskOverlay extends OverlayPanel
 			note("* out of sight — last seen state");
 		}
 
-		if (s.tier != null)
+		if (config.oppShowTier())
 		{
-			line("BH tier", s.tier + (s.skulled ? " (skulled)" : ""),
-				s.skulled ? SKULLED_COLOR : UNSKULLED_COLOR);
-		}
-		else
-		{
-			line("Status", s.skulled ? "Skulled" : "Unskulled",
-				s.skulled ? SKULLED_COLOR : UNSKULLED_COLOR);
-		}
-
-		line("Risk (est)", plugin.fmt(s.riskGp), null);
-		line("Smite value (est)", plugin.fmt(s.smiteGp), null);
-		line("Protected", "top " + s.keptAssumed + " (assumed)", null);
-
-		if (s.skulled)
-		{
-			note("Assuming their best item is");
-			note("protected (skulled + Protect Item).");
-		}
-		else
-		{
-			note("Assuming top " + s.keptAssumed + " items protected:");
-			note("appears unskulled with");
-			note("Protect Item active.");
-		}
-		if (s.tierFloor > s.totalSeenGp)
-		{
-			note("Tier icon implies more risk");
-			note("than their visible gear shows.");
-		}
-
-		final CombatCalc.Estimate est = plugin.combatEstimate();
-		if (est != null && est.style != CombatCalc.Style.OTHER)
-		{
-			line("Style", est.styleName, null);
-			line("Hit chance (est)", Math.round(est.hitChance * 100) + "%", null);
-			if (est.maxHit >= 0)
+			if (s.tier != null)
 			{
-				line("Max hit", est.overheadCounters
-					? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
-					: Integer.toString(est.maxHit), null);
+				line("BH tier", s.tier + (s.skulled ? " (skulled)" : ""),
+					s.skulled ? SKULLED_COLOR : UNSKULLED_COLOR);
 			}
 			else
 			{
-				line("Max hit", "spell-based", null);
+				line("Status", s.skulled ? "Skulled" : "Unskulled",
+					s.skulled ? SKULLED_COLOR : UNSKULLED_COLOR);
 			}
-			if (est.overheadCounters)
+		}
+
+		line("Risk (est)", plugin.fmt(s.riskGp), null);
+		if (config.oppShowSmite())
+		{
+			line("Smite value (est)", plugin.fmt(s.smiteGp), null);
+		}
+		if (config.oppShowProtected())
+		{
+			line("Protected", "top " + s.keptAssumed + " (assumed)", null);
+		}
+
+		if (config.oppShowNotes())
+		{
+			if (s.skulled)
 			{
-				note("Their overhead blocks 40%");
-				note("of this style in PvP.");
+				note("Assuming their best item is");
+				note("protected (skulled + Protect Item).");
 			}
-			note("Assumes their best defensive");
-			note("prayer and potion boosts" + (est.defenceAssumed ? "," : "."));
-			if (est.defenceAssumed)
+			else
 			{
-				note("and 99 Def (no hiscores yet).");
+				note("Assuming top " + s.keptAssumed + " items protected:");
+				note("appears unskulled with");
+				note("Protect Item active.");
+			}
+			if (s.tierFloor > s.totalSeenGp)
+			{
+				note("Tier icon implies more risk");
+				note("than their visible gear shows.");
+			}
+		}
+
+		// Everything below the header is the player's own side of the fight — kept visually
+		// separate so "Max hit" can't read as the opponent's (in-game feedback).
+		final CombatCalc.Estimate est = plugin.combatEstimate();
+		if (est != null && est.style != CombatCalc.Style.OTHER
+			&& (config.oppShowHitChance() || config.oppShowMaxHit()))
+		{
+			panelComponent.getChildren().add(TitleComponent.builder().text("You vs them").build());
+			if (config.oppShowHitChance())
+			{
+				line("Your style", est.styleName, null);
+				line("Your hit chance (est)", Math.round(est.hitChance * 100) + "%", null);
+			}
+			if (config.oppShowMaxHit())
+			{
+				if (est.maxHit >= 0)
+				{
+					line("Your max hit", est.overheadCounters
+						? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
+						: Integer.toString(est.maxHit), null);
+				}
+				else
+				{
+					line("Your max hit", "spell-based", null);
+				}
+			}
+			if (config.oppShowNotes())
+			{
+				if (est.overheadCounters)
+				{
+					note("Their overhead blocks 40%");
+					note("of this style in PvP.");
+				}
+				note("Assumes their best defensive");
+				note("prayer and potion boosts" + (est.defenceAssumed ? "," : "."));
+				if (est.defenceAssumed)
+				{
+					note("and 99 Def (no hiscores yet).");
+				}
 			}
 		}
 
