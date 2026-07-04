@@ -169,6 +169,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// The BH hub's target readout: "Name (combatLevel)" — format captured live 2026-07-04.
 	private static final Pattern BH_TARGET_LINE = Pattern.compile("(.+) \\((\\d{1,3})\\)");
 
+	// One-time in-game note after an update ships — keep in step with the build.gradle version.
+	private static final String PLUGIN_VERSION = "1.1.0";
+	private static final String K_ANNOUNCED = "announcedVersion";
+
 	// Drinking from the chugging barrel (confirmed in-game; distinct from the eat/drink 829).
 	private static final int CHUG_ANIMATION = 11645;
 
@@ -199,6 +203,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Inject
 	private HiscoreManager hiscoreManager;
 
+	@Inject
+	private net.runelite.client.chat.ChatMessageManager chatMessageManager;
+
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
 	private final Map<String, Long> repairCosts = new HashMap<>();
 
@@ -216,6 +223,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Auto-focus: the target name last read off the BH HUD, and one still awaiting a scene match.
 	private String lastBhTargetName;
 	private String pendingAutoFocusName;
+	private boolean pendingUpdateNote;
 	// The target hub interface, self-discovered by its "No Target" idle text (falls back to the
 	// PVP_ICONS group until seen). Probe fields mirror the K/D scan's load-then-wait pattern.
 	private int bhHudGroup = -1;
@@ -374,6 +382,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// whichever happens last so the tallies always arm (self-guarded against re-loads).
 			ticksSinceLogin = 0;
 			load();
+			pendingUpdateNote = !PLUGIN_VERSION.equals(
+				configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_ANNOUNCED));
 		}
 	}
 
@@ -620,6 +630,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			maybeImportActualKd(kdScanGroup);
 		}
+		if (pendingUpdateNote && ticksSinceLogin >= 4)
+		{
+			pendingUpdateNote = false;
+			announceUpdate();
+		}
 		if (bhHudProbeCountdown > 0 && --bhHudProbeCountdown == 0 && bhHudGroup < 0)
 		{
 			final StringBuilder sb = new StringBuilder();
@@ -645,6 +660,29 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return "?";
 		}
+	}
+
+	/**
+	 * One in-game chat note per shipped version, the way many plugins announce updates — sent a
+	 * few ticks after login so it doesn't get lost in the login burst, then never again for this
+	 * version (global config key).
+	 */
+	private void announceUpdate()
+	{
+		final String message = new net.runelite.client.chat.ChatMessageBuilder()
+			.append(net.runelite.client.chat.ChatColorType.HIGHLIGHT)
+			.append("PvP Profit Tracker " + PLUGIN_VERSION + ": ")
+			.append(net.runelite.client.chat.ChatColorType.NORMAL)
+			.append("NEW opponent risk tools — right-click a player and choose Risk, or get a "
+				+ "Bounty Hunter target, to see their gear, estimated risk, smite value, stats and "
+				+ "your hit chance/max hit (spec-aware). Protect Item now shows (On)/(Off) beside "
+				+ "your Risk. Not your thing? Every piece is toggleable in the plugin settings.")
+			.build();
+		chatMessageManager.queue(net.runelite.client.chat.QueuedMessage.builder()
+			.type(net.runelite.api.ChatMessageType.GAMEMESSAGE)
+			.runeLiteFormattedMessage(message)
+			.build());
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_ANNOUNCED, PLUGIN_VERSION);
 	}
 
 	// --- Auto-focus a new Bounty Hunter target ---
