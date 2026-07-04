@@ -212,6 +212,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Auto-focus: the target name last read off the BH HUD, and one still awaiting a scene match.
 	private String lastBhTargetName;
 	private String pendingAutoFocusName;
+	// The target hub interface, self-discovered by its "No Target" idle text (falls back to the
+	// PVP_ICONS group until seen). Probe fields mirror the K/D scan's load-then-wait pattern.
+	private int bhHudGroup = -1;
+	private int bhHudProbeGroup = -1;
+	private int bhHudProbeCountdown;
+	private int lastBhHudTextHash;
 
 	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
 	// player's true in-game K/D (imported at Edgeville, kept counting from there).
@@ -558,6 +564,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// Any opened interface might be the Kill Death Ratio window — scan it once its text has loaded.
 		kdScanGroup = e.getGroupId();
 		kdScanCountdown = 2;
+		// It might also be the BH target hub — recognisable idle ("No Target") when no target is up.
+		bhHudProbeGroup = e.getGroupId();
+		bhHudProbeCountdown = 2;
 	}
 
 	@Subscribe
@@ -601,6 +610,19 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			maybeImportActualKd(kdScanGroup);
 		}
+		if (bhHudProbeCountdown > 0 && --bhHudProbeCountdown == 0 && bhHudGroup < 0)
+		{
+			final StringBuilder sb = new StringBuilder();
+			for (int child = 0; child < 80; child++)
+			{
+				collectText(client.getWidget(bhHudProbeGroup, child), sb, 0);
+			}
+			if (sb.toString().toLowerCase().contains("no target"))
+			{
+				bhHudGroup = bhHudProbeGroup;
+				log.debug("BH target hub found: interface {}", bhHudGroup);
+			}
+		}
 	}
 
 	String itemName(int id)
@@ -627,37 +649,58 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void maybeAutoFocusBhTarget()
 	{
 		final StringBuilder sb = new StringBuilder();
+		final int group = bhHudGroup >= 0 ? bhHudGroup : InterfaceID.PVP_ICONS;
 		for (int child = 0; child < 80; child++)
 		{
-			collectText(client.getWidget(InterfaceID.PVP_ICONS, child), sb, 0);
+			collectText(client.getWidget(group, child), sb, 0);
+		}
+		final String hudText = sb.toString();
+		// The hub idles as "No Target" with dashes (screenshot-verified) — that is the explicit
+		// no-target state, which also re-arms detection for the next assignment.
+		if (hudText.toLowerCase().contains("no target"))
+		{
+			lastBhTargetName = null;
+			return;
 		}
 		String name = null;
-		for (final String rawLine : sb.toString().split("\n"))
+		for (final String rawLine : hudText.split("\n"))
 		{
-			final String line = rawLine.trim();
-			if (line.isEmpty())
+			String line = rawLine.trim();
+			if (line.isEmpty() || line.startsWith("-"))
 			{
 				continue;
 			}
 			if (line.toLowerCase().startsWith("target"))
 			{
-				final String rest = line.replaceFirst("(?i)target:?", "").trim();
-				if (!rest.isEmpty() && !"none".equalsIgnoreCase(rest))
+				line = line.replaceFirst("(?i)target:?", "").trim();
+				if (line.isEmpty() || "none".equalsIgnoreCase(line))
 				{
-					// May carry a combat level suffix — the name is what precedes " (".
-					final int paren = rest.indexOf(" (");
-					name = Text.toJagexName(paren > 0 ? rest.substring(0, paren) : rest);
-					break;
+					continue;
 				}
 			}
-			else if (scenePlayerNamed(line) != null)
+			// The header shows the bare name, sometimes with a combat-level suffix.
+			final int paren = line.indexOf(" (");
+			final String candidate = paren > 0 ? line.substring(0, paren) : line;
+			if (scenePlayerNamed(candidate) != null)
 			{
-				name = Text.toJagexName(line);
+				name = Text.toJagexName(candidate);
 				break;
 			}
 		}
 		if (name == null)
 		{
+			// Nothing parseable. If the hub is showing something new that isn't the idle text,
+			// record it once — that's the exact format a future fix needs.
+			final int hash = hudText.hashCode();
+			if (hash != lastBhHudTextHash)
+			{
+				lastBhHudTextHash = hash;
+				if (!hudText.trim().isEmpty())
+				{
+					log.debug("BH hud text (no target parsed, interface {}): {}",
+						group, hudText.replace('\n', '|'));
+				}
+			}
 			lastBhTargetName = null; // no readable target — re-arm for the next assignment
 			return;
 		}
