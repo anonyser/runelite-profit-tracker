@@ -27,9 +27,12 @@ import net.runelite.client.game.ItemStats;
  */
 class CombatCalc
 {
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CombatCalc.class);
+
 	/** Damage scales with Strength and melee strength bonus — unique among ranged weapons. */
 	private static final int ECLIPSE_ATLATL = 29000;
 	private static final int DARK_BOW = 11235;
+	private static final int DARK_BOW_BH = 27853;
 
 	/**
 	 * Special-attack MAX-HIT modifiers for the common PvP spec weapons, from the wiki's Special
@@ -58,12 +61,31 @@ class CombatCalc
 		SPEC_MAX.put(12848, gmaul);  // granite maul (or)
 		SPEC_MAX.put(24225, gmaul);  // ornate maul
 		SPEC_MAX.put(11802, new double[]{1.375, 1, 0}); // Armadyl godsword
+		SPEC_MAX.put(20368, new double[]{1.375, 1, 0}); // Armadyl godsword (or)
 		SPEC_MAX.put(11804, new double[]{1.21, 1, 0});  // Bandos godsword
+		SPEC_MAX.put(20370, new double[]{1.21, 1, 0});  // Bandos godsword (or)
 		SPEC_MAX.put(27690, new double[]{1.5, 1, 0});   // Voidwaker (guaranteed, up to 150%)
-		SPEC_MAX.put(DARK_BOW, new double[]{1.3, 2, 0}); // dark bow (1.5 with dragon arrows)
+		SPEC_MAX.put(DARK_BOW, new double[]{1.3, 2, 0});    // dark bow (1.5 with dragon arrows)
+		SPEC_MAX.put(DARK_BOW_BH, new double[]{1.3, 2, 0}); // dark bow (bh)
 		SPEC_MAX.put(19481, new double[]{1.25, 1, 0});  // heavy ballista
+		SPEC_MAX.put(26712, new double[]{1.25, 1, 0});  // heavy ballista (or)
 		SPEC_MAX.put(13576, new double[]{1.5, 1, 0});   // dragon warhammer
+		SPEC_MAX.put(26710, new double[]{1.5, 1, 0});   // dragon warhammer (or)
+		SPEC_MAX.put(28035, new double[]{1.5, 1, 0});   // corrupted dragon warhammer (bh)
 		SPEC_MAX.put(21003, new double[]{1.0, 1, 0});   // elder maul (accuracy-only spec)
+		SPEC_MAX.put(27100, new double[]{1.0, 1, 0});   // elder maul (or)
+		// Bounty Hunter imbued spec weapons (gameval BH_*_IMBUE ids) — the in-game report that
+		// started this: the BH dragon mace is 27857, not the base mace's 1434.
+		SPEC_MAX.put(27857, new double[]{1.5, 1, 0});   // dragon mace (bh)
+		SPEC_MAX.put(1305, new double[]{1.25, 1, 0});   // dragon longsword
+		SPEC_MAX.put(27859, new double[]{1.25, 1, 0});  // dragon longsword (bh)
+		SPEC_MAX.put(10887, new double[]{1.1, 1, 0});   // barrelchest anchor
+		SPEC_MAX.put(27855, new double[]{1.1, 1, 0});   // barrelchest anchor (bh)
+		final double[] abyDaggerBh = {0.85, 2, 0};
+		SPEC_MAX.put(27861, abyDaggerBh); // abyssal dagger (bh)
+		SPEC_MAX.put(27863, abyDaggerBh); // abyssal dagger (bh)(p)
+		SPEC_MAX.put(27865, abyDaggerBh); // abyssal dagger (bh)(p+)
+		SPEC_MAX.put(27867, abyDaggerBh); // abyssal dagger (bh)(p++)
 		final double[] abyDagger = {0.85, 2, 0};
 		SPEC_MAX.put(13265, abyDagger); // abyssal dagger
 		SPEC_MAX.put(13267, abyDagger); // abyssal dagger(p)
@@ -81,6 +103,9 @@ class CombatCalc
 	/** Reads all game state on the client thread; the returned estimate is immutable. */
 	private final Client client;
 	private final ItemManager itemManager;
+	// Change-detection for the spec debug line (client thread only).
+	private boolean lastSpecActive;
+	private int lastSpecWeapon = -1;
 
 	CombatCalc(Client client, ItemManager itemManager)
 	{
@@ -257,17 +282,17 @@ class CombatCalc
 		// With the special-attack bar lit, the max-hit line switches to the spec's ceiling for
 		// the known PvP spec weapons (in-game feedback: "press spec, see the spec number").
 		final boolean specActive = client.getVarpValue(VarPlayerID.SA_ATTACK) == 1;
+		final int weaponId = wornWeaponId();
 		int specMaxHit = -1;
 		int specHits = 1;
 		boolean specTotal = false;
 		if (specActive && maxHit >= 0)
 		{
-			final int weaponId = wornWeaponId();
 			final double[] spec = SPEC_MAX.get(weaponId);
 			if (spec != null)
 			{
 				double mult = spec[0];
-				if (weaponId == DARK_BOW && wornAmmoIsDragonArrow())
+				if ((weaponId == DARK_BOW || weaponId == DARK_BOW_BH) && wornAmmoIsDragonArrow())
 				{
 					mult = 1.5; // the dark bow spec jumps from 30% to 50% with dragon arrows
 				}
@@ -275,6 +300,14 @@ class CombatCalc
 				specHits = (int) spec[1];
 				specTotal = spec[2] == 1;
 			}
+		}
+		if (specActive != lastSpecActive || weaponId != lastSpecWeapon)
+		{
+			// Change-only, so a missed table entry shows up in the dev log instead of silently
+			// displaying the normal max (how the BH dragon mace gap was found).
+			lastSpecActive = specActive;
+			lastSpecWeapon = weaponId;
+			log.debug("spec state: active={} weapon={} specMax={}", specActive, weaponId, specMaxHit);
 		}
 
 		return new Estimate(style, styleName, chance, maxHit, overheadCounters,
