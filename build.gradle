@@ -31,3 +31,14 @@ java {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
 }
+
+// Dev-only: launch a RuneLite client with this plugin loaded. Not part of the standard Hub build.
+tasks.register('runClient', JavaExec) {
+    group = 'application'
+    description = 'Launch RuneLite with the PvP Profit Tracker plugin loaded (dev testing)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.anonyser.pvpprofittracker.PvpProfitTrackerPluginTest'
+    enableAssertions = true
+    maxHeapSize = '8g'      // give the dev client 8 GB of RAM
+    minHeapSize = '1g'
+}
