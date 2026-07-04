@@ -14,9 +14,14 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 
 /**
- * Side panel: the tracked values grouped in display order (K/D, profit, risk, net worth, crates,
- * points), baseline reset buttons, and the Edgeville K/D tip. Section titles carry a tooltip
- * explaining the Actual / Session / Baseline modes.
+ * Side panel: the tracked values grouped in display order (K/D, profit, risk, opponent, net worth,
+ * crates, points), baseline reset buttons, and the Edgeville K/D tip. Section titles carry a
+ * tooltip explaining the Actual / Session / Baseline modes.
+ *
+ * Every component is PERSISTENT: refresh passes set label texts and row visibility in place, and
+ * nothing is ever torn down and re-added. The original build-from-scratch version visibly
+ * jittered whenever anything updated — and mid-fight (eating, gear swaps, opponent changes) that
+ * was several times a second. Text updates on existing labels don't flicker.
  */
 class PvpProfitTrackerPanel extends PluginPanel
 {
@@ -25,35 +30,101 @@ class PvpProfitTrackerPanel extends PluginPanel
 		+ "<b>Baseline</b> — long-term tally, keeps saving until you reset it.</html>";
 	private static final Color FLASH_COLOR = new Color(255, 200, 60);
 
-	// A rebuild tears everything down and re-adds it; mid-fight the triggers come several times
-	// a second (own risk, opponent gear, visibility), which made the panel visibly jitter. Burst
-	// updates are coalesced: rebuild at most once per interval, with a trailing rebuild so the
-	// last state of a burst always lands.
+	// Refresh bursts are coalesced: at most one per interval, with a trailing refresh so the last
+	// state of a burst always lands.
 	private static final int REBUILD_COALESCE_MS = 300;
 
 	private final PvpProfitTrackerPlugin plugin;
 	private final PvpProfitTrackerConfig config;
 	private final JPanel body = new JPanel();
-	private final Timer flashTick = new Timer(1000, e -> rebuild()); // drives the crate-value countdown
-	private final Timer rebuildSoon = new Timer(REBUILD_COALESCE_MS, e -> rebuild());
+	private final Timer flashTick = new Timer(1000, e -> refresh()); // drives the crate-value countdown
+	private final Timer refreshSoon = new Timer(REBUILD_COALESCE_MS, e -> refresh());
 	private final Timer opponentSoon;
 	private final OpponentSection opponentSection;
-	private long lastRebuildAt;
+	private long lastRefreshAt;
 	private long lastOpponentAt;
+
+	// K/D
+	private final JPanel kdHolder;
+	private final JLabel kdActual = rowLabel("Read from the game's own stats: the Edgeville Kill "
+		+ "Death Ratio window (world PvP) or the Bounty Hunter HUD, which refreshes it as you get kills.");
+	private final JLabel kdActualNote = noteLabel();
+	private final JLabel kdBaseline = rowLabel(MODES_TIP);
+	private final JLabel kdSession = rowLabel(MODES_TIP);
+	// Profit
+	private final JPanel profitHolder;
+	private final JLabel profitBaseline = rowLabel(null);
+	private final JLabel profitSession = rowLabel(null);
+	// Risk
+	private final JPanel riskHolder;
+	private final JLabel riskRow = rowLabel("Lost on death and applied to profit as a loss.");
+	// Opponent
+	private final JPanel opponentHolder;
+	// Net worth
+	private final JPanel netWorthHolder;
+	private final JLabel netWorthRow = rowLabel("Informational only — never counts toward profit.");
+	private final JLabel barrelRow = rowLabel("Potions stored in your chugging barrel — counted in "
+		+ "net worth; each chug books one dose of each as a consumable.");
+	// Crates
+	private final JPanel cratesHolder;
+	private final JLabel crateFlashRow = rowLabel("Added to profit — this message disappears in a few seconds.");
+	private final JLabel cratesBaseline = rowLabel(MODES_TIP);
+	private final JLabel cratesSession = rowLabel(MODES_TIP);
+	// Points
+	private final JPanel pointsHolder;
+	private final JLabel pointsCurrent = rowLabel("Your actual points balance from the game — goes "
+		+ "down when you spend.");
+	private final JLabel pointsBaseline = rowLabel(MODES_TIP);
+	private final JLabel pointsSession = rowLabel(MODES_TIP);
 
 	PvpProfitTrackerPanel(PvpProfitTrackerPlugin plugin, PvpProfitTrackerConfig config)
 	{
 		this.plugin = plugin;
 		this.config = config;
 		flashTick.setRepeats(false);
-		rebuildSoon.setRepeats(false);
-		opponentSection = new OpponentSection();
-		opponentSoon = new Timer(REBUILD_COALESCE_MS, e -> refreshOpponent());
-		opponentSoon.setRepeats(false);
+		refreshSoon.setRepeats(false);
 		setLayout(new BorderLayout());
 		body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
 		add(body, BorderLayout.NORTH);
-		rebuild();
+
+		kdActualNote.setText("<html>From the game's stats — updates per kill at Bounty Hunter.</html>");
+		kdHolder = holder(section("Kill / Death", kdActual, kdActualNote, kdBaseline, kdSession));
+		profitHolder = holder(section("Profit", profitBaseline, profitSession));
+		riskHolder = holder(section("Risk", riskRow));
+
+		opponentSection = new OpponentSection();
+		opponentSoon = new Timer(REBUILD_COALESCE_MS, e -> refreshOpponent());
+		opponentSoon.setRepeats(false);
+		opponentHolder = holder(opponentSection);
+
+		netWorthHolder = holder(section("Net worth", netWorthRow, barrelRow));
+		cratesHolder = holder(section("Bounty crates", crateFlashRow, cratesBaseline, cratesSession));
+		pointsHolder = holder(section("Bounty Hunter points", pointsCurrent, pointsBaseline, pointsSession));
+
+		final JPanel resets = section("Resets",
+			button("Reset session", plugin::resetSession),
+			button("Reset baseline K/D", plugin::resetBaselineKd),
+			button("Reset baseline profit", plugin::resetBaselineProfit),
+			button("Reset baseline crates", plugin::resetBaselineCrates),
+			button("Reset baseline points", plugin::resetBaselinePoints));
+
+		final JLabel tip = new JLabel("<html>Actual K/D loads from the Kill Death Ratio window at "
+			+ "Edgeville, or updates automatically on Bounty Hunter worlds.</html>");
+		tip.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+		tip.setBorder(new EmptyBorder(2, 8, 6, 8));
+		tip.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		body.add(kdHolder);
+		body.add(profitHolder);
+		body.add(riskHolder);
+		body.add(opponentHolder);
+		body.add(netWorthHolder);
+		body.add(cratesHolder);
+		body.add(pointsHolder);
+		body.add(holder(resets));
+		body.add(tip);
+
+		refresh();
 	}
 
 	/** Refresh from the EDT (safe to call from game-thread event handlers). */
@@ -61,21 +132,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 	{
 		SwingUtilities.invokeLater(() ->
 		{
-			if (System.currentTimeMillis() - lastRebuildAt >= REBUILD_COALESCE_MS)
+			if (System.currentTimeMillis() - lastRefreshAt >= REBUILD_COALESCE_MS)
 			{
-				rebuild();
+				refresh();
 			}
-			else if (!rebuildSoon.isRunning())
+			else if (!refreshSoon.isRunning())
 			{
-				rebuildSoon.start();
+				refreshSoon.start();
 			}
 		});
 	}
 
-	/**
-	 * Refresh only the opponent section, in place — the high-frequency path during fights.
-	 * Coalesced like full rebuilds, but it never tears components down, so no jitter.
-	 */
+	/** Refresh only the opponent section — the highest-frequency path during fights. */
 	void updateOpponent()
 	{
 		SwingUtilities.invokeLater(() ->
@@ -95,131 +163,145 @@ class PvpProfitTrackerPanel extends PluginPanel
 	{
 		lastOpponentAt = System.currentTimeMillis();
 		opponentSection.refresh();
+		opponentHolder.setVisible(opponentSection.isVisible());
 	}
 
-	private void rebuild()
+	/** Update every section's texts and visibility in place. EDT only. */
+	private void refresh()
 	{
-		lastRebuildAt = System.currentTimeMillis();
+		lastRefreshAt = System.currentTimeMillis();
 		final Stats session = plugin.getSession();
 		final Stats baseline = plugin.getBaseline();
 		final Stats actual = plugin.getActual();
 
-		body.removeAll();
+		kdActual.setVisible(config.showActualKd());
+		kdActualNote.setVisible(config.showActualKd());
+		kdActual.setText("Actual:  " + (actual.kills + actual.deaths > 0
+			? PvpProfitTrackerPlugin.kdText(actual) : "— (visit Edgeville)"));
+		kdBaseline.setVisible(config.showBaselineKd());
+		kdBaseline.setText("Baseline:  " + PvpProfitTrackerPlugin.kdText(baseline));
+		kdSession.setVisible(config.showSessionKd());
+		kdSession.setText("Session (" + plugin.sessionDuration() + "):  "
+			+ PvpProfitTrackerPlugin.kdText(session));
+		kdHolder.setVisible(config.showActualKd() || config.showBaselineKd() || config.showSessionKd());
 
-		final JPanel kd = titled("Kill / Death");
-		if (config.showActualKd())
-		{
-			kd.add(row("Actual", actual.kills + actual.deaths > 0
-				? PvpProfitTrackerPlugin.kdText(actual) : "— (visit Edgeville)", null,
-				"Read from the game's own stats: the Edgeville Kill Death Ratio window (world PvP) "
-					+ "or the Bounty Hunter HUD, which refreshes it as you get kills."));
-			kd.add(note("From the game's stats — updates per kill at Bounty Hunter."));
-		}
-		if (config.showBaselineKd())
-		{
-			kd.add(row("Baseline", PvpProfitTrackerPlugin.kdText(baseline), null, MODES_TIP));
-		}
-		if (config.showSessionKd())
-		{
-			kd.add(row("Session (" + plugin.sessionDuration() + ")",
-				PvpProfitTrackerPlugin.kdText(session), null, MODES_TIP));
-		}
-		addIfUsed(kd);
+		profitBaseline.setVisible(config.showBaselineProfit());
+		profitRow(profitBaseline, "Baseline", baseline);
+		profitSession.setVisible(config.showSessionProfit());
+		profitRow(profitSession, "Session", session);
+		profitHolder.setVisible(config.showBaselineProfit() || config.showSessionProfit());
 
-		final JPanel profit = titled("Profit");
-		if (config.showBaselineProfit())
-		{
-			profit.add(profitRow("Baseline", baseline));
-		}
-		if (config.showSessionProfit())
-		{
-			profit.add(profitRow("Session", session));
-		}
-		addIfUsed(profit);
+		riskRow.setText("If you die now:  " + plugin.fmt(plugin.getRiskGp()));
+		riskHolder.setVisible(config.showRisk());
 
-		if (config.showRisk())
-		{
-			final JPanel p = titled("Risk");
-			p.add(row("If you die now", plugin.fmt(plugin.getRiskGp()), null,
-				"Lost on death and applied to profit as a loss."));
-			body.add(p);
-			body.add(gap());
-		}
+		refreshOpponent();
 
-		opponentSection.refresh();
-		body.add(opponentSection);
-		if (opponentSection.isVisible())
-		{
-			body.add(gap());
-		}
+		netWorthRow.setText("Bank + carried:  " + plugin.netWorthDisplay());
+		barrelRow.setVisible(plugin.getBarrelGp() > 0);
+		barrelRow.setText("Incl. barrel:  " + plugin.fmt(plugin.getBarrelGp()));
+		netWorthHolder.setVisible(config.showNetWorth());
 
-		if (config.showNetWorth())
+		final boolean flashing = plugin.crateFlashGp() > 0;
+		crateFlashRow.setVisible(flashing);
+		if (flashing)
 		{
-			final JPanel p = titled("Net worth");
-			p.add(row("Bank + carried", plugin.netWorthDisplay(), null,
-				"Informational only — never counts toward profit."));
-			if (plugin.getBarrelGp() > 0)
-			{
-				p.add(row("Incl. barrel", plugin.fmt(plugin.getBarrelGp()), null,
-					"Potions stored in your chugging barrel — counted in net worth; "
-						+ "each chug books one dose of each as a consumable."));
-			}
-			body.add(p);
-			body.add(gap());
-		}
-
-		final JPanel crates = titled("Bounty crates");
-		if (plugin.crateFlashGp() > 0)
-		{
-			crates.add(row("Crate reward", plugin.fmt(plugin.crateFlashGp())
-				+ " (" + plugin.crateFlashSecondsLeft() + "s)", FLASH_COLOR,
-				"Added to profit — this message disappears in a few seconds."));
+			crateFlashRow.setText("Crate reward:  " + plugin.fmt(plugin.crateFlashGp())
+				+ " (" + plugin.crateFlashSecondsLeft() + "s)");
+			crateFlashRow.setForeground(FLASH_COLOR);
 			flashTick.restart();
 		}
-		if (config.showBaselineCrates())
-		{
-			crates.add(row("Baseline", String.valueOf(baseline.crates), null, MODES_TIP));
-		}
-		if (config.showSessionCrates())
-		{
-			crates.add(row("Session", String.valueOf(session.crates), null, MODES_TIP));
-		}
-		addIfUsed(crates);
+		cratesBaseline.setVisible(config.showBaselineCrates());
+		cratesBaseline.setText("Baseline:  " + baseline.crates);
+		cratesSession.setVisible(config.showSessionCrates());
+		cratesSession.setText("Session:  " + session.crates);
+		cratesHolder.setVisible(flashing || config.showBaselineCrates() || config.showSessionCrates());
 
-		final JPanel points = titled("Bounty Hunter points");
-		if (config.showCurrentPoints())
-		{
-			points.add(row("Current", plugin.currentBhPointsDisplay(), null,
-				"Your actual points balance from the game — goes down when you spend."));
-		}
-		if (config.showBaselinePoints())
-		{
-			points.add(row("Baseline", String.valueOf(baseline.points), null, MODES_TIP));
-		}
-		if (config.showSessionPoints())
-		{
-			points.add(row("Session", String.valueOf(session.points), null, MODES_TIP));
-		}
-		addIfUsed(points);
-
-		final JPanel resets = titled("Resets");
-		resets.add(button("Reset session", plugin::resetSession));
-		resets.add(button("Reset baseline K/D", plugin::resetBaselineKd));
-		resets.add(button("Reset baseline profit", plugin::resetBaselineProfit));
-		resets.add(button("Reset baseline crates", plugin::resetBaselineCrates));
-		resets.add(button("Reset baseline points", plugin::resetBaselinePoints));
-		body.add(resets);
-		body.add(gap());
-
-		final JLabel tip = new JLabel("<html>Actual K/D loads from the Kill Death Ratio window at "
-			+ "Edgeville, or updates automatically on Bounty Hunter worlds.</html>");
-		tip.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
-		tip.setBorder(new EmptyBorder(2, 8, 6, 8));
-		tip.setAlignmentX(Component.LEFT_ALIGNMENT);
-		body.add(tip);
+		pointsCurrent.setVisible(config.showCurrentPoints());
+		pointsCurrent.setText("Current:  " + plugin.currentBhPointsDisplay());
+		pointsBaseline.setVisible(config.showBaselinePoints());
+		pointsBaseline.setText("Baseline:  " + baseline.points);
+		pointsSession.setVisible(config.showSessionPoints());
+		pointsSession.setText("Session:  " + session.points);
+		pointsHolder.setVisible(config.showCurrentPoints() || config.showBaselinePoints()
+			|| config.showSessionPoints());
 
 		body.revalidate();
 		body.repaint();
+	}
+
+	private void profitRow(JLabel label, String name, Stats s)
+	{
+		final long profit = s.profit();
+		label.setText(name + ":  " + plugin.fmt(profit));
+		label.setForeground(profit >= 0 ? config.profitColor() : config.lossColor());
+		label.setToolTipText("<html>Loot keys: " + PvpProfitTrackerPlugin.gpFull(s.gainedGp)
+			+ "<br>Crates: " + PvpProfitTrackerPlugin.gpFull(s.crateGp)
+			+ "<br>Deaths: -" + PvpProfitTrackerPlugin.gpFull(s.lostToDeathGp)
+			+ "<br>Consumables: -" + PvpProfitTrackerPlugin.gpFull(s.consumedGp) + "</html>");
+	}
+
+	/** A dark titled section holding the given persistent components. */
+	private JPanel section(String title, Component... rows)
+	{
+		final JPanel p = new JPanel();
+		p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+		p.setBorder(new EmptyBorder(6, 8, 6, 8));
+		p.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		p.setAlignmentX(Component.LEFT_ALIGNMENT);
+		final JLabel t = new JLabel(title);
+		t.setForeground(Color.WHITE);
+		t.setToolTipText(MODES_TIP);
+		t.setAlignmentX(Component.LEFT_ALIGNMENT);
+		p.add(t);
+		for (final Component row : rows)
+		{
+			p.add(row);
+		}
+		return p;
+	}
+
+	/** Wraps a section with its trailing gap so both show and hide together. */
+	private JPanel holder(JPanel sectionPanel)
+	{
+		final JPanel h = new JPanel();
+		h.setLayout(new BoxLayout(h, BoxLayout.Y_AXIS));
+		h.setOpaque(false);
+		h.setAlignmentX(Component.LEFT_ALIGNMENT);
+		h.add(sectionPanel);
+		final JPanel gap = new JPanel();
+		gap.setPreferredSize(new java.awt.Dimension(0, 6));
+		gap.setOpaque(false);
+		h.add(gap);
+		return h;
+	}
+
+	private JLabel rowLabel(String tooltip)
+	{
+		final JLabel l = new JLabel();
+		l.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		if (tooltip != null)
+		{
+			l.setToolTipText(tooltip);
+		}
+		l.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return l;
+	}
+
+	private JLabel noteLabel()
+	{
+		final JLabel l = new JLabel();
+		l.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+		l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
+		l.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return l;
+	}
+
+	private JButton button(String label, Runnable action)
+	{
+		final JButton b = new JButton(label);
+		b.addActionListener(e -> action.run());
+		b.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return b;
 	}
 
 	/** A hiscore level for display: dash until the lookup answers. */
@@ -237,8 +319,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 	/**
 	 * The focused-opponent section as a PERSISTENT set of components: refresh() sets label texts
 	 * and row visibility in place, and the icon grids repopulate only when the item ids actually
-	 * change. The old build-it-from-scratch version made the whole panel visibly jitter during
-	 * fights (in-game report) — text updates on existing labels don't.
+	 * change.
 	 */
 	private final class OpponentSection extends JPanel
 	{
@@ -254,7 +335,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel colosseumRow = rowLabel(null);
 		private final JLabel zukRow = rowLabel(null);
 		private final JLabel solRow = rowLabel(null);
-		private final JLabel riskRow = rowLabel("Visible + previously seen gear, minus assumed "
+		private final JLabel riskEstRow = rowLabel("Visible + previously seen gear, minus assumed "
 			+ "protected items; at least the BH tier minimum when a tier icon shows.");
 		private final JLabel smiteRow = rowLabel("What losing Protect Item would additionally expose.");
 		private final JPanel wornGrid = newGrid();
@@ -292,7 +373,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			add(colosseumRow);
 			add(zukRow);
 			add(solRow);
-			add(riskRow);
+			add(riskEstRow);
 			add(smiteRow);
 			add(wornGrid);
 			add(seenHeader);
@@ -303,27 +384,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 			add(assumeNote);
 			add(clearBtn);
 			refresh();
-		}
-
-		private JLabel rowLabel(String tooltip)
-		{
-			final JLabel l = new JLabel();
-			l.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			if (tooltip != null)
-			{
-				l.setToolTipText(tooltip);
-			}
-			l.setAlignmentX(Component.LEFT_ALIGNMENT);
-			return l;
-		}
-
-		private JLabel noteLabel()
-		{
-			final JLabel l = new JLabel();
-			l.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
-			l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
-			l.setAlignmentX(Component.LEFT_ALIGNMENT);
-			return l;
 		}
 
 		private JPanel newGrid()
@@ -353,7 +413,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			meleeStats.setVisible(has);
 			otherStats.setVisible(has);
 			prayerRow.setVisible(has);
-			riskRow.setVisible(has);
+			riskEstRow.setVisible(has);
 			smiteRow.setVisible(has);
 			wornGrid.setVisible(has);
 			protectNote.setVisible(has);
@@ -400,7 +460,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			zukRow.setText("TzKal-Zuk KC:  " + opp.zukKc);
 			solRow.setVisible(opp.solHereditKc > 0);
 			solRow.setText("Sol Heredit KC:  " + opp.solHereditKc);
-			riskRow.setText("Risk (est):  " + plugin.fmt(opp.riskGp));
+			riskEstRow.setText("Risk (est):  " + plugin.fmt(opp.riskGp));
 			smiteRow.setText("Smite value (est):  " + plugin.fmt(opp.smiteGp));
 
 			if (!java.util.Arrays.equals(lastWornIds, opp.equippedIds))
@@ -458,78 +518,5 @@ class PvpProfitTrackerPanel extends PluginPanel
 				grid.add(icon);
 			}
 		}
-	}
-
-	/** Add a section only if any rows were enabled for it (the title label is child 0). */
-	private void addIfUsed(JPanel section)
-	{
-		if (section.getComponentCount() > 1)
-		{
-			body.add(section);
-			body.add(gap());
-		}
-	}
-
-	private JLabel profitRow(String label, Stats s)
-	{
-		final long profit = s.profit();
-		final Color color = profit >= 0 ? config.profitColor() : config.lossColor();
-		final String breakdown = "<html>Loot keys: " + PvpProfitTrackerPlugin.gpFull(s.gainedGp)
-			+ "<br>Crates: " + PvpProfitTrackerPlugin.gpFull(s.crateGp)
-			+ "<br>Deaths: -" + PvpProfitTrackerPlugin.gpFull(s.lostToDeathGp)
-			+ "<br>Consumables: -" + PvpProfitTrackerPlugin.gpFull(s.consumedGp) + "</html>";
-		return row(label, plugin.fmt(profit), color, breakdown);
-	}
-
-	private JPanel titled(String title)
-	{
-		final JPanel p = new JPanel();
-		p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
-		p.setBorder(new EmptyBorder(6, 8, 6, 8));
-		p.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		final JLabel t = new JLabel(title);
-		t.setForeground(Color.WHITE);
-		t.setToolTipText(MODES_TIP);
-		t.setAlignmentX(Component.LEFT_ALIGNMENT);
-		p.add(t);
-		return p;
-	}
-
-	private JLabel row(String left, String right, Color rightColor, String tooltip)
-	{
-		final JLabel l = new JLabel(left + ":  " + right);
-		l.setForeground(rightColor != null ? rightColor : ColorScheme.LIGHT_GRAY_COLOR);
-		if (tooltip != null)
-		{
-			l.setToolTipText(tooltip);
-		}
-		l.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return l;
-	}
-
-	/** A small, dimmed explanatory line under a row. */
-	private JLabel note(String text)
-	{
-		final JLabel l = new JLabel("<html>" + text + "</html>");
-		l.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
-		l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
-		l.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return l;
-	}
-
-	private JButton button(String label, Runnable action)
-	{
-		final JButton b = new JButton(label);
-		b.addActionListener(e -> action.run());
-		b.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return b;
-	}
-
-	private Component gap()
-	{
-		final JPanel g = new JPanel();
-		g.setPreferredSize(new java.awt.Dimension(0, 6));
-		g.setOpaque(false);
-		return g;
 	}
 }
