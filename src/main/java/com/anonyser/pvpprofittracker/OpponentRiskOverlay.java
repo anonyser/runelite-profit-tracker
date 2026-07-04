@@ -92,6 +92,34 @@ class OpponentRiskOverlay extends OverlayPanel
 			note("than their visible gear shows.");
 		}
 
+		final CombatCalc.Estimate est = plugin.combatEstimate();
+		if (est != null && est.style != CombatCalc.Style.OTHER)
+		{
+			line("Style", est.styleName, null);
+			line("Hit chance (est)", Math.round(est.hitChance * 100) + "%", null);
+			if (est.maxHit >= 0)
+			{
+				line("Max hit", est.overheadCounters
+					? est.maxHit + " (" + CombatCalc.afterOverhead(est.maxHit) + " prayed)"
+					: Integer.toString(est.maxHit), null);
+			}
+			else
+			{
+				line("Max hit", "spell-based", null);
+			}
+			if (est.overheadCounters)
+			{
+				note("Their overhead blocks 40%");
+				note("of this style in PvP.");
+			}
+			note("Assumes their best defensive");
+			note("prayer and potion boosts" + (est.defenceAssumed ? "," : "."));
+			if (est.defenceAssumed)
+			{
+				note("and 99 Def (no hiscores yet).");
+			}
+		}
+
 		return super.render(graphics);
 	}
 

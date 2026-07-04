@@ -1,0 +1,515 @@
+package com.anonyser.pvpprofittracker;
+
+import net.runelite.api.Client;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.api.ParamID;
+import net.runelite.api.Skill;
+import net.runelite.api.StructComposition;
+import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.VarPlayerID;
+import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.game.ItemEquipmentStats;
+import net.runelite.client.game.ItemManager;
+
+/**
+ * Hit-chance and max-hit estimates against the focused opponent, using the standard OSRS combat
+ * formulas. The player's side is exact where the client can see it: boosted levels (potions
+ * included), active prayers, worn gear, and the selected combat style resolved from the game's
+ * own weapon-style data. The opponent's side is an estimate built from their hiscore levels and
+ * visible gear, deliberately assuming the best defensive prayer their Prayer level allows and a
+ * super combat potion — a strong opponent, so the estimate errs honest. Every assumption is
+ * labelled in the overlay.
+ */
+class CombatCalc
+{
+	/** Reads all game state on the client thread; the returned estimate is immutable. */
+	private final Client client;
+	private final ItemManager itemManager;
+
+	CombatCalc(Client client, ItemManager itemManager)
+	{
+		this.client = client;
+		this.itemManager = itemManager;
+	}
+
+	// The combat class the player's selected style attacks with.
+	enum Style
+	{
+		MELEE, RANGED, MAGIC, OTHER
+	}
+
+	/** One coherent estimate; fields final so the EDT can't see a torn state. */
+	static final class Estimate
+	{
+		final Style style;
+		final String styleName;   // display text, e.g. "Melee (slash)"
+		final double hitChance;   // 0..1
+		final int maxHit;         // -1 = spell-based (magic), unknown
+		final boolean overheadCounters; // their overhead prayer blocks this style (40% off in PvP)
+		final boolean defenceAssumed;   // hiscores didn't answer (yet) — level 99 assumed
+		final int oppDefence;     // defence level used (post-assumption, pre-potion)
+		final int oppPrayer;      // prayer level used for the best-prayer assumption
+
+		Estimate(Style style, String styleName, double hitChance, int maxHit,
+			boolean overheadCounters, boolean defenceAssumed, int oppDefence, int oppPrayer)
+		{
+			this.style = style;
+			this.styleName = styleName;
+			this.hitChance = hitChance;
+			this.maxHit = maxHit;
+			this.overheadCounters = overheadCounters;
+			this.defenceAssumed = defenceAssumed;
+			this.oppDefence = oppDefence;
+			this.oppPrayer = oppPrayer;
+		}
+	}
+
+	/** Compute the current estimate against the opponent snapshot. Client thread only. */
+	Estimate estimate(OpponentTracker.Snapshot opp)
+	{
+		if (opp == null)
+		{
+			return null;
+		}
+
+		final Stance stance = currentStance();
+		final Bonuses mine = worn();
+
+		// Opponent levels: hiscores when they've answered, otherwise a maxed main — the
+		// assumption that keeps the estimate conservative until real numbers arrive.
+		final boolean defenceAssumed = opp.defenceLevel <= 0;
+		final int oppDefence = defenceAssumed ? 99 : opp.defenceLevel;
+		final int oppPrayer = opp.prayerLevel <= 0 ? 99 : opp.prayerLevel;
+		final int oppMagic = opp.magicLevel <= 0 ? 99 : opp.magicLevel;
+
+		// Assume a super combat potion and the best defensive prayer their Prayer level allows.
+		final int boostedDef = oppDefence + superCombatBoost(oppDefence);
+		final int effDef = effectiveLevel(boostedDef, defensivePrayerMult(oppPrayer), 0);
+
+		// Opponent's style-specific defence bonus, from the gear we can currently see.
+		final Bonuses theirs = fromIds(opp.equippedIds);
+
+		final Style style = stance.style;
+		double chance = 0;
+		int maxHit = -1;
+		String styleName;
+		boolean overheadCounters = false;
+
+		switch (style)
+		{
+			case MELEE:
+			{
+				// The weapon's best accuracy type stands in for the selected one — close enough
+				// for an estimate, since players fight with their weapon's strong side.
+				final int atkBonus = Math.max(mine.astab, Math.max(mine.aslash, mine.acrush));
+				final int defBonus = mine.astab >= mine.aslash && mine.astab >= mine.acrush ? theirs.dstab
+					: mine.aslash >= mine.acrush ? theirs.dslash : theirs.dcrush;
+				final String type = mine.astab >= mine.aslash && mine.astab >= mine.acrush ? "stab"
+					: mine.aslash >= mine.acrush ? "slash" : "crush";
+				styleName = "Melee (" + type + ")";
+				final int effAtk = effectiveLevel(client.getBoostedSkillLevel(Skill.ATTACK),
+					attackPrayerMult(), stance.attackBonus);
+				chance = hitChance(attackRoll(effAtk, atkBonus), attackRoll(effDef, defBonus));
+				final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.STRENGTH),
+					strengthPrayerMult(), stance.strengthBonus);
+				maxHit = maxHit(effStr, mine.str);
+				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.MELEE;
+				break;
+			}
+			case RANGED:
+			{
+				styleName = "Ranged";
+				final int effAcc = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
+					rangedAccuracyPrayerMult(), stance.rangedBonus);
+				chance = hitChance(attackRoll(effAcc, mine.arange), attackRoll(effDef, theirs.drange));
+				final int effStr = effectiveLevel(client.getBoostedSkillLevel(Skill.RANGED),
+					rangedStrengthPrayerMult(), stance.rangedBonus);
+				maxHit = maxHit(effStr, mine.rstr);
+				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.RANGED
+					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MAGE
+					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MELEE;
+				break;
+			}
+			case MAGIC:
+			{
+				styleName = "Magic";
+				final int effAcc = effectiveLevel(client.getBoostedSkillLevel(Skill.MAGIC),
+					magicPrayerMult(), 0);
+				// Magic defence is 70% the defender's Magic level, 30% their Defence.
+				final int effMagicDef = (int) (0.7 * (oppMagic + 8) + 0.3 * effDef);
+				chance = hitChance(attackRoll(effAcc, mine.amagic), attackRoll(effMagicDef, theirs.dmagic));
+				maxHit = -1; // spell-dependent — shown as such rather than guessed
+				overheadCounters = opp.overhead == net.runelite.api.HeadIcon.MAGIC
+					|| opp.overhead == net.runelite.api.HeadIcon.RANGE_MAGE;
+				break;
+			}
+			default:
+				styleName = "—";
+				break;
+		}
+
+		return new Estimate(style, styleName, chance, maxHit, overheadCounters,
+			defenceAssumed, oppDefence, oppPrayer);
+	}
+
+	// --- The player's selected combat style, from the game's own weapon-style data ---
+
+	private static final class Stance
+	{
+		final Style style;
+		final int attackBonus;   // melee accurate +3 / controlled +1
+		final int strengthBonus; // melee aggressive +3 / controlled +1
+		final int rangedBonus;   // ranged accurate +3 (indistinguishable from rapid — kept at 0)
+
+		Stance(Style style, int attackBonus, int strengthBonus, int rangedBonus)
+		{
+			this.style = style;
+			this.attackBonus = attackBonus;
+			this.strengthBonus = strengthBonus;
+			this.rangedBonus = rangedBonus;
+		}
+	}
+
+	/**
+	 * Resolve the selected attack style exactly like the core Attack Styles plugin: weapon
+	 * category varbit → WEAPON_STYLES enum → style structs, with the defensive-autocast offset.
+	 * The style name then gives the combat class and the invisible stance bonus.
+	 */
+	private Stance currentStance()
+	{
+		final int weaponType = client.getVarbitValue(VarbitID.COMBAT_WEAPON_CATEGORY);
+		int idx = client.getVarpValue(VarPlayerID.COM_MODE);
+		final String[] styles = weaponStyleNames(weaponType);
+		if (idx == 4)
+		{
+			idx += client.getVarbitValue(VarbitID.AUTOCAST_DEFMODE);
+		}
+		final String name = idx >= 0 && idx < styles.length && styles[idx] != null ? styles[idx] : "";
+		switch (name)
+		{
+			case "Accurate":
+				return new Stance(Style.MELEE, 3, 0, 0);
+			case "Aggressive":
+				return new Stance(Style.MELEE, 0, 3, 0);
+			case "Controlled":
+				return new Stance(Style.MELEE, 1, 1, 0);
+			case "Defensive":
+				return new Stance(Style.MELEE, 0, 0, 0);
+			case "Ranging":
+				// Covers both the accurate (+3) and rapid (+0) styles — the game data doesn't
+				// distinguish them here. Rapid is the PvP norm, so no bonus is applied.
+				return new Stance(Style.RANGED, 0, 0, 0);
+			case "Longrange":
+				return new Stance(Style.RANGED, 0, 0, 0);
+			case "Casting":
+			case "Defensive casting":
+				return new Stance(Style.MAGIC, 0, 0, 0);
+			default:
+				return new Stance(Style.OTHER, 0, 0, 0);
+		}
+	}
+
+	private String[] weaponStyleNames(int weaponType)
+	{
+		// from script4525, as read by the core Attack Styles plugin
+		final int weaponStyleEnum = client.getEnum(EnumID.WEAPON_STYLES).getIntValue(weaponType);
+		if (weaponStyleEnum == -1)
+		{
+			if (weaponType == 22) // blue moon spear
+			{
+				return new String[]{"Accurate", "Aggressive", null, "Defensive", "Casting", "Defensive casting"};
+			}
+			if (weaponType == 30) // partisan
+			{
+				return new String[]{"Accurate", "Aggressive", "Aggressive", "Defensive"};
+			}
+			return new String[0];
+		}
+		final EnumComposition styleEnum = client.getEnum(weaponStyleEnum);
+		final int[] structs = styleEnum.getIntVals();
+		final String[] names = new String[structs.length];
+		for (int i = 0; i < structs.length; i++)
+		{
+			final StructComposition struct = client.getStructComposition(structs[i]);
+			String name = struct.getStringValue(ParamID.ATTACK_STYLE_NAME);
+			if (i == 5 && "Defensive".equals(name))
+			{
+				name = "Defensive casting";
+			}
+			names[i] = name;
+		}
+		return names;
+	}
+
+	// --- Equipment bonuses ---
+
+	private static final class Bonuses
+	{
+		int astab, aslash, acrush, amagic, arange;
+		int dstab, dslash, dcrush, dmagic, drange;
+		int str, rstr;
+	}
+
+	private Bonuses worn()
+	{
+		final Bonuses b = new Bonuses();
+		final ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		if (worn != null)
+		{
+			for (final Item item : worn.getItems())
+			{
+				if (item.getId() > 0)
+				{
+					add(b, item.getId());
+				}
+			}
+		}
+		return b;
+	}
+
+	private Bonuses fromIds(int[] ids)
+	{
+		final Bonuses b = new Bonuses();
+		for (final int id : ids)
+		{
+			if (id > 0)
+			{
+				add(b, id);
+			}
+		}
+		return b;
+	}
+
+	private void add(Bonuses b, int itemId)
+	{
+		final net.runelite.client.game.ItemStats stats = itemManager.getItemStats(itemId);
+		final ItemEquipmentStats e = stats == null ? null : stats.getEquipment();
+		if (e == null)
+		{
+			return;
+		}
+		b.astab += e.getAstab();
+		b.aslash += e.getAslash();
+		b.acrush += e.getAcrush();
+		b.amagic += e.getAmagic();
+		b.arange += e.getArange();
+		b.dstab += e.getDstab();
+		b.dslash += e.getDslash();
+		b.dcrush += e.getDcrush();
+		b.dmagic += e.getDmagic();
+		b.drange += e.getDrange();
+		b.str += e.getStr();
+		b.rstr += e.getRstr();
+	}
+
+	// --- The player's active prayer multipliers (varbit reads, client thread) ---
+
+	private double attackPrayerMult()
+	{
+		if (on(VarbitID.PRAYER_PIETY))
+		{
+			return 1.20;
+		}
+		if (on(VarbitID.PRAYER_CHIVALRY))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_INCREDIBLEREFLEXES))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_IMPROVEDREFLEXES))
+		{
+			return 1.10;
+		}
+		if (on(VarbitID.PRAYER_CLARITYOFTHOUGHT))
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	private double strengthPrayerMult()
+	{
+		if (on(VarbitID.PRAYER_PIETY))
+		{
+			return 1.23;
+		}
+		if (on(VarbitID.PRAYER_CHIVALRY))
+		{
+			return 1.18;
+		}
+		if (on(VarbitID.PRAYER_ULTIMATESTRENGTH))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_SUPERHUMANSTRENGTH))
+		{
+			return 1.10;
+		}
+		if (on(VarbitID.PRAYER_BURSTOFSTRENGTH))
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	private double rangedAccuracyPrayerMult()
+	{
+		if (on(VarbitID.PRAYER_RIGOUR))
+		{
+			return 1.20;
+		}
+		if (on(VarbitID.PRAYER_DEADEYE))
+		{
+			return 1.18;
+		}
+		if (on(VarbitID.PRAYER_EAGLEEYE))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_HAWKEYE))
+		{
+			return 1.10;
+		}
+		if (on(VarbitID.PRAYER_SHARPEYE))
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	private double rangedStrengthPrayerMult()
+	{
+		if (on(VarbitID.PRAYER_RIGOUR))
+		{
+			return 1.23;
+		}
+		if (on(VarbitID.PRAYER_DEADEYE))
+		{
+			return 1.18;
+		}
+		if (on(VarbitID.PRAYER_EAGLEEYE))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_HAWKEYE))
+		{
+			return 1.10;
+		}
+		if (on(VarbitID.PRAYER_SHARPEYE))
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	private double magicPrayerMult()
+	{
+		if (on(VarbitID.PRAYER_AUGURY))
+		{
+			return 1.25;
+		}
+		if (on(VarbitID.PRAYER_MYSTICVIGOUR))
+		{
+			return 1.18;
+		}
+		if (on(VarbitID.PRAYER_MYSTICMIGHT))
+		{
+			return 1.15;
+		}
+		if (on(VarbitID.PRAYER_MYSTICLORE))
+		{
+			return 1.10;
+		}
+		if (on(VarbitID.PRAYER_MYSTICWILL))
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	private boolean on(int varbit)
+	{
+		return client.getVarbitValue(varbit) == 1;
+	}
+
+	// --- Pure formula pieces (unit-tested) ---
+
+	/** effective level = floor(boosted × prayer) + stance + 8 */
+	static int effectiveLevel(int boostedLevel, double prayerMult, int stanceBonus)
+	{
+		return (int) (boostedLevel * prayerMult) + stanceBonus + 8;
+	}
+
+	/** roll = effective × (equipment bonus + 64) */
+	static int attackRoll(int effectiveLevel, int equipmentBonus)
+	{
+		return effectiveLevel * (equipmentBonus + 64);
+	}
+
+	/** The standard OSRS accuracy formula. */
+	static double hitChance(int attackRoll, int defenceRoll)
+	{
+		if (attackRoll < 0 || defenceRoll < 0)
+		{
+			return 0;
+		}
+		if (attackRoll > defenceRoll)
+		{
+			return 1d - (defenceRoll + 2d) / (2d * (attackRoll + 1d));
+		}
+		return attackRoll / (2d * (defenceRoll + 1d));
+	}
+
+	/** max hit = floor(0.5 + effective × (strength bonus + 64) / 640) */
+	static int maxHit(int effectiveLevel, int strengthBonus)
+	{
+		return (effectiveLevel * (strengthBonus + 64) + 320) / 640;
+	}
+
+	/** Super combat / super defence boost: 5 + 15% of the level. */
+	static int superCombatBoost(int level)
+	{
+		return 5 + (int) (level * 0.15);
+	}
+
+	/**
+	 * The best defensive prayer multiplier a given Prayer level allows — the assumption the spec
+	 * asks for: Piety-tier from 70 (Rigour/Augury match its 25%), Chivalry from 60, then the
+	 * Skin line below that.
+	 */
+	static double defensivePrayerMult(int prayerLevel)
+	{
+		if (prayerLevel >= 70)
+		{
+			return 1.25;
+		}
+		if (prayerLevel >= 60)
+		{
+			return 1.20;
+		}
+		if (prayerLevel >= 28)
+		{
+			return 1.15;
+		}
+		if (prayerLevel >= 13)
+		{
+			return 1.10;
+		}
+		if (prayerLevel >= 1)
+		{
+			return 1.05;
+		}
+		return 1;
+	}
+
+	/** PvP protection prayers block 40% — the shown hit lands at 60%. */
+	static int afterOverhead(int maxHit)
+	{
+		return maxHit * 6 / 10;
+	}
+}

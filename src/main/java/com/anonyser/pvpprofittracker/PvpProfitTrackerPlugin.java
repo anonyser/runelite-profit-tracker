@@ -203,6 +203,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Focused-opponent risk estimation (right-click "Risk" on a player).
 	private OpponentTracker opponentTracker;
 	private OpponentRiskOverlay opponentOverlay;
+	private CombatCalc combatCalc;
+	// Written on the client thread each tick; volatile so the overlay/panel read a coherent one.
+	private volatile CombatCalc.Estimate combatEstimate;
 
 	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
 	// player's true in-game K/D (imported at Edgeville, kept counting from there).
@@ -278,6 +281,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
 			opponentTracker = new OpponentTracker(client, hiscoreManager, this);
+			combatCalc = new CombatCalc(client, itemManager);
 			opponentOverlay = new OpponentRiskOverlay(this, config, opponentTracker);
 			overlayManager.add(opponentOverlay);
 			panel = new PvpProfitTrackerPanel(this, config);
@@ -314,6 +318,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			overlay = null;
 			opponentOverlay = null;
 			opponentTracker = null;
+			combatCalc = null;
+			combatEstimate = null;
 			panel = null;
 			navButton = null;
 			heldLootKeyCount = 0;
@@ -559,6 +565,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (opponentTracker != null && config.opponentRisk())
 		{
 			opponentTracker.onTick();
+			// Re-estimated every tick: the player's own gear, prayers and boosts are inputs too,
+			// and they change without any opponent-side event firing.
+			combatEstimate = combatCalc.estimate(opponentTracker.snapshot());
 		}
 		if (!deathKeepCalibrated)
 		{
@@ -1194,6 +1203,19 @@ public class PvpProfitTrackerPlugin extends Plugin
 	long keepFloor(int id)
 	{
 		return keepPriorityFloor.getOrDefault(id, 0L);
+	}
+
+	/** Focused-opponent estimate for the side panel (EDT-safe snapshot; null = no focus). */
+	OpponentTracker.Snapshot opponentSnapshot()
+	{
+		final OpponentTracker t = opponentTracker;
+		return t == null ? null : t.snapshot();
+	}
+
+	/** Current hit-chance/max-hit estimate against the focused opponent (null = none). */
+	CombatCalc.Estimate combatEstimate()
+	{
+		return combatEstimate;
 	}
 
 	/** Whether the Protect Item prayer is active right now. Game-thread only (varbit read). */
