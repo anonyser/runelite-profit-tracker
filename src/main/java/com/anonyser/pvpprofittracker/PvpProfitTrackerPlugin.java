@@ -25,6 +25,8 @@ import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.Player;
 import net.runelite.api.SkullIcon;
 import net.runelite.api.WorldType;
@@ -33,6 +35,9 @@ import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.MenuOpened;
+import net.runelite.api.events.PlayerChanged;
+import net.runelite.api.events.PlayerDespawned;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
@@ -48,6 +53,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.hiscore.HiscoreManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -183,6 +189,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Inject
 	private Gson gson;
 
+	@Inject
+	private HiscoreManager hiscoreManager;
+
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
 	private final Map<String, Long> repairCosts = new HashMap<>();
 
@@ -190,6 +199,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private PvpProfitTrackerOverlay overlay;
 	private PvpProfitTrackerPanel panel;
 	private NavigationButton navButton;
+
+	// Focused-opponent risk estimation (right-click "Risk" on a player).
+	private OpponentTracker opponentTracker;
+	private OpponentRiskOverlay opponentOverlay;
 
 	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
 	// player's true in-game K/D (imported at Edgeville, kept counting from there).
@@ -264,6 +277,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
+			opponentTracker = new OpponentTracker(client, hiscoreManager, this);
+			opponentOverlay = new OpponentRiskOverlay(this, config, opponentTracker);
+			overlayManager.add(opponentOverlay);
 			panel = new PvpProfitTrackerPanel(this, config);
 			navButton = NavigationButton.builder()
 				.tooltip("PvP Profit Tracker")
@@ -293,8 +309,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			save();
 			overlayManager.remove(overlay);
+			overlayManager.remove(opponentOverlay);
 			clientToolbar.removeNavigation(navButton);
 			overlay = null;
+			opponentOverlay = null;
+			opponentTracker = null;
 			panel = null;
 			navButton = null;
 			heldLootKeyCount = 0;
@@ -431,6 +450,58 @@ public class PvpProfitTrackerPlugin extends Plugin
 		lastBhPoints = now;
 	}
 
+	/**
+	 * Add a "Risk" option to every other player on an open right-click menu. Selecting it focuses
+	 * that player in the opponent-risk overlay/panel. Added only when the menu is already open, so
+	 * it can never hijack a left click mid-fight.
+	 */
+	@Subscribe
+	public void onMenuOpened(MenuOpened e)
+	{
+		if (opponentTracker == null || !config.opponentRisk())
+		{
+			return;
+		}
+		final Set<Player> offered = new HashSet<>();
+		for (final MenuEntry entry : e.getMenuEntries())
+		{
+			final Player p = entry.getPlayer();
+			if (p == null || p == client.getLocalPlayer() || !offered.add(p))
+			{
+				continue;
+			}
+			client.getMenu().createMenuEntry(-1)
+				.setOption("Risk")
+				.setTarget(entry.getTarget())
+				.setType(MenuAction.RUNELITE)
+				.onClick(me ->
+				{
+					opponentTracker.focus(p);
+					updatePanel();
+				});
+		}
+	}
+
+	@Subscribe
+	public void onPlayerChanged(PlayerChanged e)
+	{
+		// Fires when a player's composition changes — the live gear-swap signal for the opponent.
+		if (opponentTracker != null && config.opponentRisk() && opponentTracker.isFocused(e.getPlayer()))
+		{
+			opponentTracker.refresh(e.getPlayer());
+			updatePanel();
+		}
+	}
+
+	@Subscribe
+	public void onPlayerDespawned(PlayerDespawned e)
+	{
+		if (opponentTracker != null)
+		{
+			opponentTracker.markDespawned(e.getPlayer());
+		}
+	}
+
 	@Subscribe
 	public void onAnimationChanged(AnimationChanged e)
 	{
@@ -485,6 +556,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
 		updateRisk();
+		if (opponentTracker != null && config.opponentRisk())
+		{
+			opponentTracker.onTick();
+		}
 		if (!deathKeepCalibrated)
 		{
 			deathKeepCalibrated = calibrateSkullFromDeathScreen();
@@ -495,7 +570,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
-	private String itemName(int id)
+	String itemName(int id)
 	{
 		try
 		{
@@ -1115,6 +1190,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return base + (protectItemOn() ? 1 : 0);
 	}
 
+	/** Learned keep-priority floor for an item (0 when none) — see rankedCarriedItems. */
+	long keepFloor(int id)
+	{
+		return keepPriorityFloor.getOrDefault(id, 0L);
+	}
+
 	/** Whether the Protect Item prayer is active right now. Game-thread only (varbit read). */
 	boolean protectItemOn()
 	{
@@ -1141,7 +1222,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 * contradicted are taken from the learned map instead. Anything still unknown is treated
 	 * as skulled, the safer direction for a risk estimate.
 	 */
-	private boolean isSkullIconSkulled(int icon)
+	boolean isSkullIconSkulled(int icon)
 	{
 		final Boolean learned = skullIconLearned.get(icon);
 		if (learned != null)
@@ -1461,6 +1542,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 		clientThread.invoke(() ->
 		{
 			loadPriceOverrides();
+			if (opponentTracker != null && !config.opponentRisk())
+			{
+				opponentTracker.clear();
+				updatePanel();
+			}
 			if (client.getGameState() == GameState.LOGGED_IN)
 			{
 				updateRisk();
@@ -1522,7 +1608,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 * Per-item value lost on death: GE price if tradeable, else the untradeable's repair-on-death cost
 	 * (from {@code reclaim-costs.csv}, matched by name), else its store value as a fallback.
 	 */
-	private long deathValue(int id)
+	long deathValue(int id)
 	{
 		final long ge = feedPrice(id);
 		if (ge > 0)

@@ -38,9 +38,17 @@ public interface PvpProfitTrackerConfig extends Config
 	String trackersSection = "trackers";
 
 	@ConfigSection(
+		name = "Opponent risk",
+		description = "Estimate what a right-clicked opponent is risking"
+			+ "<br>from their visible gear, skull and Bounty Hunter tier.",
+		position = 2
+	)
+	String opponentSection = "opponent";
+
+	@ConfigSection(
 		name = "Advanced",
 		description = "Tracking behaviour and debugging",
-		position = 2
+		position = 3
 	)
 	String advancedSection = "advanced";
 
@@ -269,6 +277,40 @@ public interface PvpProfitTrackerConfig extends Config
 		section = trackersSection
 	)
 	default boolean showSessionPoints()
+	{
+		return true;
+	}
+
+	// --- Opponent risk ---
+
+	@ConfigItem(
+		keyName = "opponentRisk",
+		name = "Enable opponent risk",
+		description = "Adds a Risk option to the right-click menu on players."
+			+ "<br>Selecting it focuses that player: their visible gear,"
+			+ "<br>estimated risk, smite value and protection assumptions"
+			+ "<br>are tracked live, including items seen equipped earlier"
+			+ "<br>in the fight. Only worn equipment is ever visible —"
+			+ "<br>inventories can't be read, so this is an estimate.",
+		position = 0,
+		section = opponentSection
+	)
+	default boolean opponentRisk()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showOpponentOverlay",
+		name = "Opponent overlay",
+		description = "Show the opponent-risk overlay on screen. It is a"
+			+ "<br>separate overlay, moved independently of the main"
+			+ "<br>PvP Profit overlay (alt-drag to move). Right-click it"
+			+ "<br>for a Clear option that drops the focused opponent.",
+		position = 1,
+		section = opponentSection
+	)
+	default boolean showOpponentOverlay()
 	{
 		return true;
 	}
