@@ -25,16 +25,25 @@ class PvpProfitTrackerPanel extends PluginPanel
 		+ "<b>Baseline</b> — long-term tally, keeps saving until you reset it.</html>";
 	private static final Color FLASH_COLOR = new Color(255, 200, 60);
 
+	// A rebuild tears everything down and re-adds it; mid-fight the triggers come several times
+	// a second (own risk, opponent gear, visibility), which made the panel visibly jitter. Burst
+	// updates are coalesced: rebuild at most once per interval, with a trailing rebuild so the
+	// last state of a burst always lands.
+	private static final int REBUILD_COALESCE_MS = 300;
+
 	private final PvpProfitTrackerPlugin plugin;
 	private final PvpProfitTrackerConfig config;
 	private final JPanel body = new JPanel();
 	private final Timer flashTick = new Timer(1000, e -> rebuild()); // drives the crate-value countdown
+	private final Timer rebuildSoon = new Timer(REBUILD_COALESCE_MS, e -> rebuild());
+	private long lastRebuildAt;
 
 	PvpProfitTrackerPanel(PvpProfitTrackerPlugin plugin, PvpProfitTrackerConfig config)
 	{
 		this.plugin = plugin;
 		this.config = config;
 		flashTick.setRepeats(false);
+		rebuildSoon.setRepeats(false);
 		setLayout(new BorderLayout());
 		body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
 		add(body, BorderLayout.NORTH);
@@ -44,11 +53,22 @@ class PvpProfitTrackerPanel extends PluginPanel
 	/** Refresh from the EDT (safe to call from game-thread event handlers). */
 	void update()
 	{
-		SwingUtilities.invokeLater(this::rebuild);
+		SwingUtilities.invokeLater(() ->
+		{
+			if (System.currentTimeMillis() - lastRebuildAt >= REBUILD_COALESCE_MS)
+			{
+				rebuild();
+			}
+			else if (!rebuildSoon.isRunning())
+			{
+				rebuildSoon.start();
+			}
+		});
 	}
 
 	private void rebuild()
 	{
+		lastRebuildAt = System.currentTimeMillis();
 		final Stats session = plugin.getSession();
 		final Stats baseline = plugin.getBaseline();
 		final Stats actual = plugin.getActual();
