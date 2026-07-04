@@ -32,6 +32,11 @@ Display-only. It reads game state and shows numbers; it never sends input or act
 - **Activated Bounty Hunter gear** — ancient warriors' equipment (Vesta's, Statius's, Morrigan's,
   Zuriel's, corrupted included) is valued at its coin activation fee automatically: that's what the
   killer receives if you die with it, so that's what you're risking. No setup needed.
+- **Protect Item status** — `(On)` or `(Off)` beside the Risk value. Neutral colour outside the
+  Wilderness; inside, `(Off)` glows red and `(On)` shows green, so walking in unprotected gets
+  caught at a glance. Toggleable under **Trackers**.
+- **Opponent risk** — right-click a player and choose **Risk** to estimate what they're carrying,
+  your hit chance against them, and your max hit. See below.
 
 ## Tracking modes
 
@@ -42,10 +47,36 @@ Most values come in up to three flavours, each toggleable:
 - **Baseline** — a long-term tally that keeps saving across sessions until you reset it. Reset buttons
   live on the plugin's side panel (the green `$` icon in the sidebar).
 
+## Opponent risk
+
+Right-click another player and choose **Risk** to focus them. A separate overlay — movable and
+toggleable on its own — and a side-panel section then track:
+
+- **Their visible gear** — worn equipment only. Another player's inventory is never visible, and the
+  plugin doesn't pretend otherwise. Items seen equipped during the fight stay in the pool after
+  they're switched away: the dragon claws they flashed two minutes ago are still in their inventory,
+  and still part of their risk.
+- **Estimated risk** — the seen-item pool valued with the same price chain as your own risk (your
+  price overrides win here too, and Bounty Hunter activation fees and repair costs apply), minus the
+  items they'd keep. On Bounty Hunter worlds the risk-tier skull (bronze / iron / green / blue / red)
+  sets a floor — it's the game's own statement of their minimum total risk, inventory included.
+- **Smite value** — what losing Protect Item would additionally expose.
+- **Hit chance and max hit** — your current setup (gear, boosts, prayers, selected combat style)
+  against their hiscore levels and visible defence bonuses, using the standard OSRS formulas. Magic
+  max hits are spell-dependent and shown as such rather than guessed.
+
+The estimates deliberately assume a strong opponent: Protect Item on, a super combat potion, and the
+best defensive prayer their Prayer level allows (Piety-tier from 70, Chivalry from 60, the Skin line
+below that). Unskulled opponents are assumed to protect their top 4 items; skulled, their single
+best. The overlay and panel say when a number rests on an assumption. Selecting another player moves
+the focus; **Clear** (right-click the overlay, or the side-panel button) drops it, and five minutes
+out of sight drops it automatically.
+
 ## Config
 
 Everything is toggleable under **Trackers**, number formatting (full `1,428,638` or compact `1.428M`)
-under **Display**, and the Wilderness/PvP-only gate under **Advanced**. The side panel shows the full
+under **Display**, the opponent estimate under **Opponent risk**, and the Wilderness/PvP-only gate
+under **Advanced**. The side panel shows the full
 breakdown, the baseline resets, and the crate-value flash when you open a crate.
 
 ### Price overrides
