@@ -36,7 +36,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 	private final JPanel body = new JPanel();
 	private final Timer flashTick = new Timer(1000, e -> rebuild()); // drives the crate-value countdown
 	private final Timer rebuildSoon = new Timer(REBUILD_COALESCE_MS, e -> rebuild());
+	private final Timer opponentSoon;
+	private final OpponentSection opponentSection;
 	private long lastRebuildAt;
+	private long lastOpponentAt;
 
 	PvpProfitTrackerPanel(PvpProfitTrackerPlugin plugin, PvpProfitTrackerConfig config)
 	{
@@ -44,6 +47,9 @@ class PvpProfitTrackerPanel extends PluginPanel
 		this.config = config;
 		flashTick.setRepeats(false);
 		rebuildSoon.setRepeats(false);
+		opponentSection = new OpponentSection();
+		opponentSoon = new Timer(REBUILD_COALESCE_MS, e -> refreshOpponent());
+		opponentSoon.setRepeats(false);
 		setLayout(new BorderLayout());
 		body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
 		add(body, BorderLayout.NORTH);
@@ -64,6 +70,31 @@ class PvpProfitTrackerPanel extends PluginPanel
 				rebuildSoon.start();
 			}
 		});
+	}
+
+	/**
+	 * Refresh only the opponent section, in place — the high-frequency path during fights.
+	 * Coalesced like full rebuilds, but it never tears components down, so no jitter.
+	 */
+	void updateOpponent()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (System.currentTimeMillis() - lastOpponentAt >= REBUILD_COALESCE_MS)
+			{
+				refreshOpponent();
+			}
+			else if (!opponentSoon.isRunning())
+			{
+				opponentSoon.start();
+			}
+		});
+	}
+
+	private void refreshOpponent()
+	{
+		lastOpponentAt = System.currentTimeMillis();
+		opponentSection.refresh();
 	}
 
 	private void rebuild()
@@ -115,9 +146,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 			body.add(gap());
 		}
 
-		if (config.opponentRisk())
+		opponentSection.refresh();
+		body.add(opponentSection);
+		if (opponentSection.isVisible())
 		{
-			addOpponentSection();
+			body.add(gap());
 		}
 
 		if (config.showNetWorth())
@@ -189,102 +222,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 		body.repaint();
 	}
 
-	/**
-	 * The focused-opponent section: name, skull/tier, estimated risk and smite value, the gear
-	 * icons (worn now + seen earlier in the fight), the assumptions, and the hit-chance estimate.
-	 * Everything shown comes from the tracker's snapshot — names and values were resolved on the
-	 * client thread; only the async icons are requested here.
-	 */
-	private void addOpponentSection()
-	{
-		final OpponentTracker.Snapshot opp = plugin.opponentSnapshot();
-		final JPanel o = titled("Opponent risk");
-		if (opp == null)
-		{
-			o.add(note("Right-click a player and choose <b>Risk</b> to track "
-				+ "their visible gear and estimated risk here."));
-			body.add(o);
-			body.add(gap());
-			return;
-		}
-
-		o.add(row("Opponent", opp.name + (opp.visible ? "" : " (out of sight)"), null,
-			"Cleared automatically after ~5 minutes out of sight."));
-		if (opp.tier != null)
-		{
-			o.add(row("BH tier", opp.tier + (opp.skulled ? " (skulled)" : ""),
-				opp.skulled ? config.lossColor() : config.profitColor(),
-				"Bounty Hunter risk-tier icon — the game's statement of their minimum total risk."));
-		}
-		else
-		{
-			o.add(row("Status", opp.skulled ? "Skulled" : "Unskulled",
-				opp.skulled ? config.lossColor() : config.profitColor(), null));
-		}
-		// Combat-stat preview (hiscores). Levels first, then the PvP/PvM records that read a
-		// player at a glance — records hide when unranked, levels show a dash until the lookup.
-		o.add(row("Atk / Str / Def",
-			lvl(opp.attackLevel) + " / " + lvl(opp.strengthLevel) + " / " + lvl(opp.defenceLevel),
-			null, "From the hiscores — dashes until the lookup answers."));
-		o.add(row("Rng / Mag / HP",
-			lvl(opp.rangedLevel) + " / " + lvl(opp.magicLevel) + " / " + lvl(opp.hitpointsLevel),
-			null, "From the hiscores — dashes until the lookup answers."));
-		o.add(row("Prayer", lvl(opp.prayerLevel), null,
-			"Drives the defensive-prayer assumption in your hit chance."));
-		if (opp.bhTargetKills >= 0 || opp.bhRogueKills >= 0)
-		{
-			o.add(row("BH kills", "T " + kc(opp.bhTargetKills) + "  ·  R " + kc(opp.bhRogueKills),
-				null, "Bounty Hunter kills from the hiscores: as Target's hunter · as rogue."));
-		}
-		if (opp.colosseumGlory > 0)
-		{
-			o.add(row("Colosseum glory", Integer.toString(opp.colosseumGlory), null, null));
-		}
-		if (opp.zukKc > 0)
-		{
-			o.add(row("TzKal-Zuk KC", Integer.toString(opp.zukKc), null, null));
-		}
-		if (opp.solHereditKc > 0)
-		{
-			o.add(row("Sol Heredit KC", Integer.toString(opp.solHereditKc), null, null));
-		}
-
-		o.add(row("Risk (est)", plugin.fmt(opp.riskGp), null,
-			"Visible + previously seen gear, minus assumed protected items; "
-				+ "at least the BH tier minimum when a tier icon shows."));
-		o.add(row("Smite value (est)", plugin.fmt(opp.smiteGp), null,
-			"What losing Protect Item would additionally expose."));
-
-		o.add(gearGrid(opp.equippedIds, opp.equippedNames, opp.equippedGp, "worn now"));
-		if (opp.seenOnlyIds.length > 0)
-		{
-			o.add(note("Seen earlier this fight:"));
-			o.add(gearGrid(opp.seenOnlyIds, opp.seenOnlyNames, opp.seenOnlyGp, "seen earlier this fight"));
-		}
-
-		o.add(note(opp.skulled
-			? "Assuming their most valuable item is protected (skulled, Protect Item assumed active)."
-			: "Assuming top " + opp.keptAssumed + " items are protected because opponent appears "
-				+ "unskulled with Protect Item active."));
-
-		final CombatCalc.Estimate est = plugin.combatEstimate();
-		if (est != null && est.style != CombatCalc.Style.OTHER)
-		{
-			o.add(row("Hit chance (" + est.styleName + ")", Math.round(est.hitChance * 100) + "%", null,
-				"Estimate against their hiscore levels and visible gear."));
-			o.add(row(est.specShown() ? "Max hit (spec)" : "Max hit", est.maxHitText(), null,
-				"Your current setup: gear, boosts, prayers and combat style."
-					+ " With the special-attack bar lit this shows the spec's ceiling"
-					+ " for known PvP spec weapons."));
-			o.add(note("Assumes opponent is using best available defensive prayer and potion boosts"
-				+ (est.defenceAssumed ? ", and 99 Defence until hiscores answer." : ".")));
-		}
-
-		o.add(button("Clear opponent", plugin::clearOpponent));
-		body.add(o);
-		body.add(gap());
-	}
-
 	/** A hiscore level for display: dash until the lookup answers. */
 	private static String lvl(int level)
 	{
@@ -298,27 +235,229 @@ class PvpProfitTrackerPanel extends PluginPanel
 	}
 
 	/**
-	 * Item icons, five per row (a FlowLayout would report a one-row height inside this BoxLayout
-	 * column and clip the wrap); each icon's tooltip carries the name and value.
+	 * The focused-opponent section as a PERSISTENT set of components: refresh() sets label texts
+	 * and row visibility in place, and the icon grids repopulate only when the item ids actually
+	 * change. The old build-it-from-scratch version made the whole panel visibly jitter during
+	 * fights (in-game report) — text updates on existing labels don't.
 	 */
-	private JPanel gearGrid(int[] ids, String[] names, long[] values, String context)
+	private final class OpponentSection extends JPanel
 	{
-		final JPanel grid = new JPanel(new java.awt.GridLayout(0, 5, 2, 2));
-		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		grid.setAlignmentX(Component.LEFT_ALIGNMENT);
-		for (int i = 0; i < ids.length; i++)
+		private final JLabel hint = noteLabel();
+		private final JLabel nameRow = rowLabel("Cleared automatically after ~5 minutes out of sight.");
+		private final JLabel tierRow = rowLabel(
+			"Bounty Hunter risk-tier icon — the game's statement of their minimum total risk.");
+		private final JLabel meleeStats = rowLabel("From the hiscores — dashes until the lookup answers.");
+		private final JLabel otherStats = rowLabel("From the hiscores — dashes until the lookup answers.");
+		private final JLabel prayerRow = rowLabel("Drives the defensive-prayer assumption in your hit chance.");
+		private final JLabel bhKillsRow = rowLabel(
+			"Bounty Hunter kills from the hiscores: as Target's hunter · as rogue.");
+		private final JLabel colosseumRow = rowLabel(null);
+		private final JLabel zukRow = rowLabel(null);
+		private final JLabel solRow = rowLabel(null);
+		private final JLabel riskRow = rowLabel("Visible + previously seen gear, minus assumed "
+			+ "protected items; at least the BH tier minimum when a tier icon shows.");
+		private final JLabel smiteRow = rowLabel("What losing Protect Item would additionally expose.");
+		private final JPanel wornGrid = newGrid();
+		private final JLabel seenHeader = noteLabel();
+		private final JPanel seenGrid = newGrid();
+		private final JLabel protectNote = noteLabel();
+		private final JLabel hitRow = rowLabel("Estimate against their hiscore levels and visible gear.");
+		private final JLabel maxHitRow = rowLabel("Your current setup: gear, boosts, prayers and "
+			+ "combat style. With the special-attack bar lit this shows the spec's ceiling "
+			+ "for known PvP spec weapons.");
+		private final JLabel assumeNote = noteLabel();
+		private final JButton clearBtn = button("Clear opponent", plugin::clearOpponent);
+		private int[] lastWornIds = {};
+		private int[] lastSeenIds = {};
+
+		OpponentSection()
 		{
-			if (ids[i] <= 0)
-			{
-				continue;
-			}
-			final JLabel icon = new JLabel();
-			icon.setToolTipText("<html>" + (names[i] == null ? "?" : names[i]) + "<br>"
-				+ plugin.fmt(values[i]) + " — " + context + "</html>");
-			plugin.itemIcon(ids[i]).addTo(icon);
-			grid.add(icon);
+			setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+			setBorder(new EmptyBorder(6, 8, 6, 8));
+			setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			setAlignmentX(Component.LEFT_ALIGNMENT);
+			final JLabel t = new JLabel("Opponent risk");
+			t.setForeground(Color.WHITE);
+			t.setAlignmentX(Component.LEFT_ALIGNMENT);
+			add(t);
+			hint.setText("<html>Right-click a player and choose <b>Risk</b> to track "
+				+ "their visible gear and estimated risk here.</html>");
+			add(hint);
+			add(nameRow);
+			add(tierRow);
+			add(meleeStats);
+			add(otherStats);
+			add(prayerRow);
+			add(bhKillsRow);
+			add(colosseumRow);
+			add(zukRow);
+			add(solRow);
+			add(riskRow);
+			add(smiteRow);
+			add(wornGrid);
+			add(seenHeader);
+			add(seenGrid);
+			add(protectNote);
+			add(hitRow);
+			add(maxHitRow);
+			add(assumeNote);
+			add(clearBtn);
+			refresh();
 		}
-		return grid;
+
+		private JLabel rowLabel(String tooltip)
+		{
+			final JLabel l = new JLabel();
+			l.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			if (tooltip != null)
+			{
+				l.setToolTipText(tooltip);
+			}
+			l.setAlignmentX(Component.LEFT_ALIGNMENT);
+			return l;
+		}
+
+		private JLabel noteLabel()
+		{
+			final JLabel l = new JLabel();
+			l.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+			l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
+			l.setAlignmentX(Component.LEFT_ALIGNMENT);
+			return l;
+		}
+
+		private JPanel newGrid()
+		{
+			// Five icons per row (a FlowLayout would report a one-row height in this BoxLayout
+			// column and clip the wrap).
+			final JPanel grid = new JPanel(new java.awt.GridLayout(0, 5, 2, 2));
+			grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+			return grid;
+		}
+
+		/** Update in place from the current snapshot/estimate. EDT only. */
+		void refresh()
+		{
+			final boolean enabled = config.opponentRisk();
+			setVisible(enabled);
+			if (!enabled)
+			{
+				return;
+			}
+			final OpponentTracker.Snapshot opp = plugin.opponentSnapshot();
+			final boolean has = opp != null;
+			hint.setVisible(!has);
+			nameRow.setVisible(has);
+			tierRow.setVisible(has);
+			meleeStats.setVisible(has);
+			otherStats.setVisible(has);
+			prayerRow.setVisible(has);
+			riskRow.setVisible(has);
+			smiteRow.setVisible(has);
+			wornGrid.setVisible(has);
+			protectNote.setVisible(has);
+			clearBtn.setVisible(has);
+			if (!has)
+			{
+				bhKillsRow.setVisible(false);
+				colosseumRow.setVisible(false);
+				zukRow.setVisible(false);
+				solRow.setVisible(false);
+				seenHeader.setVisible(false);
+				seenGrid.setVisible(false);
+				hitRow.setVisible(false);
+				maxHitRow.setVisible(false);
+				assumeNote.setVisible(false);
+				populateGrid(wornGrid, new int[0], null, null, "");
+				lastWornIds = new int[]{};
+				lastSeenIds = new int[]{};
+				revalidate();
+				repaint();
+				return;
+			}
+
+			nameRow.setText("Opponent:  " + opp.name + (opp.visible ? "" : " (out of sight)"));
+			if (opp.tier != null)
+			{
+				tierRow.setText("BH tier:  " + opp.tier + (opp.skulled ? " (skulled)" : ""));
+			}
+			else
+			{
+				tierRow.setText("Status:  " + (opp.skulled ? "Skulled" : "Unskulled"));
+			}
+			tierRow.setForeground(opp.skulled ? config.lossColor() : config.profitColor());
+			meleeStats.setText("Atk / Str / Def:  " + lvl(opp.attackLevel) + " / "
+				+ lvl(opp.strengthLevel) + " / " + lvl(opp.defenceLevel));
+			otherStats.setText("Rng / Mag / HP:  " + lvl(opp.rangedLevel) + " / "
+				+ lvl(opp.magicLevel) + " / " + lvl(opp.hitpointsLevel));
+			prayerRow.setText("Prayer:  " + lvl(opp.prayerLevel));
+			bhKillsRow.setVisible(opp.bhTargetKills >= 0 || opp.bhRogueKills >= 0);
+			bhKillsRow.setText("BH kills:  T " + kc(opp.bhTargetKills) + "  ·  R " + kc(opp.bhRogueKills));
+			colosseumRow.setVisible(opp.colosseumGlory > 0);
+			colosseumRow.setText("Colosseum glory:  " + opp.colosseumGlory);
+			zukRow.setVisible(opp.zukKc > 0);
+			zukRow.setText("TzKal-Zuk KC:  " + opp.zukKc);
+			solRow.setVisible(opp.solHereditKc > 0);
+			solRow.setText("Sol Heredit KC:  " + opp.solHereditKc);
+			riskRow.setText("Risk (est):  " + plugin.fmt(opp.riskGp));
+			smiteRow.setText("Smite value (est):  " + plugin.fmt(opp.smiteGp));
+
+			if (!java.util.Arrays.equals(lastWornIds, opp.equippedIds))
+			{
+				lastWornIds = opp.equippedIds.clone();
+				populateGrid(wornGrid, opp.equippedIds, opp.equippedNames, opp.equippedGp, "worn now");
+			}
+			final boolean seenAny = opp.seenOnlyIds.length > 0;
+			seenHeader.setVisible(seenAny);
+			seenHeader.setText("Seen earlier this fight:");
+			seenGrid.setVisible(seenAny);
+			if (!java.util.Arrays.equals(lastSeenIds, opp.seenOnlyIds))
+			{
+				lastSeenIds = opp.seenOnlyIds.clone();
+				populateGrid(seenGrid, opp.seenOnlyIds, opp.seenOnlyNames, opp.seenOnlyGp,
+					"seen earlier this fight");
+			}
+			protectNote.setText("<html>" + (opp.skulled
+				? "Assuming their most valuable item is protected (skulled, Protect Item assumed active)."
+				: "Assuming top " + opp.keptAssumed + " items are protected because opponent appears "
+					+ "unskulled with Protect Item active.") + "</html>");
+
+			final CombatCalc.Estimate est = plugin.combatEstimate();
+			final boolean hasEst = est != null && est.style != CombatCalc.Style.OTHER;
+			hitRow.setVisible(hasEst);
+			maxHitRow.setVisible(hasEst);
+			assumeNote.setVisible(hasEst);
+			if (hasEst)
+			{
+				hitRow.setText("Hit chance (" + est.styleName + "):  "
+					+ Math.round(est.hitChance * 100) + "%");
+				maxHitRow.setText((est.specShown() ? "Max hit (spec):  " : "Max hit:  ")
+					+ est.maxHitText());
+				assumeNote.setText("<html>Assumes opponent is using best available defensive prayer "
+					+ "and potion boosts" + (est.defenceAssumed
+						? ", and 99 Defence until hiscores answer." : ".") + "</html>");
+			}
+			revalidate();
+			repaint();
+		}
+
+		private void populateGrid(JPanel grid, int[] ids, String[] names, long[] values, String context)
+		{
+			grid.removeAll();
+			for (int i = 0; i < ids.length; i++)
+			{
+				if (ids[i] <= 0)
+				{
+					continue;
+				}
+				final JLabel icon = new JLabel();
+				icon.setToolTipText("<html>" + (names[i] == null ? "?" : names[i]) + "<br>"
+					+ plugin.fmt(values[i]) + " — " + context + "</html>");
+				plugin.itemIcon(ids[i]).addTo(icon);
+				grid.add(icon);
+			}
+		}
 	}
 
 	/** Add a section only if any rows were enabled for it (the title label is child 0). */

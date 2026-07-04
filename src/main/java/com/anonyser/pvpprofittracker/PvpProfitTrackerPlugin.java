@@ -297,7 +297,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
-			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updatePanel);
+			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updateOpponentPanel);
 			combatCalc = new CombatCalc(client, itemManager);
 			opponentOverlay = new OpponentRiskOverlay(this, config, opponentTracker);
 			overlayManager.add(opponentOverlay);
@@ -514,7 +514,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 				.onClick(me ->
 				{
 					opponentTracker.focus(p);
-					updatePanel();
+					updateOpponentPanel();
 				});
 		}
 	}
@@ -526,7 +526,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (opponentTracker != null && config.opponentRisk() && opponentTracker.isFocused(e.getPlayer()))
 		{
 			opponentTracker.refresh(e.getPlayer());
-			updatePanel();
+			updateOpponentPanel();
 		}
 	}
 
@@ -601,7 +601,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			opponentTracker.onTick();
 			// Re-estimated every tick: the player's own gear, prayers and boosts are inputs too,
 			// and they change without any opponent-side event firing.
+			final CombatCalc.Estimate before = combatEstimate;
 			combatEstimate = combatCalc.estimate(opponentTracker.snapshot());
+			if (estimateDisplayChanged(before, combatEstimate))
+			{
+				updateOpponentPanel();
+			}
 			if (config.autoFocusTarget())
 			{
 				maybeAutoFocusBhTarget();
@@ -764,7 +769,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			if (!name.equals(opponentTracker.focusedName()))
 			{
 				opponentTracker.focusName(name); // hiscore preview starts before they render
-				updatePanel();
+				updateOpponentPanel();
 				SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
 			}
 		}
@@ -775,7 +780,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				pendingAutoFocusName = null;
 				opponentTracker.focus(p);
-				updatePanel();
+				updateOpponentPanel();
 				log.debug("BH target auto-focused: {}", name);
 			}
 		}
@@ -1791,7 +1796,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			if (opponentTracker != null && !config.opponentRisk())
 			{
 				opponentTracker.clear();
-				updatePanel();
+				updateOpponentPanel();
 			}
 			if (client.getGameState() == GameState.LOGGED_IN)
 			{
@@ -2026,6 +2031,29 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			panel.update();
 		}
+	}
+
+	/** Refresh only the panel's opponent section — the high-frequency, jitter-free path. */
+	private void updateOpponentPanel()
+	{
+		if (panel != null)
+		{
+			panel.updateOpponent();
+		}
+	}
+
+	/** Whether the estimate's DISPLAYED numbers changed — the panel only redraws when they do. */
+	private static boolean estimateDisplayChanged(CombatCalc.Estimate a, CombatCalc.Estimate b)
+	{
+		if (a == null || b == null)
+		{
+			return a != b;
+		}
+		return Math.round(a.hitChance * 100) != Math.round(b.hitChance * 100)
+			|| a.maxHit != b.maxHit
+			|| a.specShown() != b.specShown()
+			|| a.specMaxHit != b.specMaxHit
+			|| !a.styleName.equals(b.styleName);
 	}
 
 	// --- Accessors for the overlay / panel ---
