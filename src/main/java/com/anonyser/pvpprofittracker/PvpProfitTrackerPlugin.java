@@ -219,6 +219,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int bhHudProbeGroup = -1;
 	private int bhHudProbeCountdown;
 	private int lastBhHudTextHash;
+	private int lastBhHudDumpTick = -1000;
 
 	// Tracking modes. session resets on restart; baseline persists until reset; actual is the
 	// player's true in-game K/D (imported at Edgeville, kept counting from there).
@@ -711,17 +712,25 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		if (name == null)
 		{
-			// Nothing parseable. If the hub is showing something new that isn't the idle text,
-			// record it once — that's the exact format a future fix needs.
-			final int hash = hudText.hashCode();
-			if (hash != lastBhHudTextHash)
+			// Nothing parseable. Record what the hub shows — but hash only the non-timer lines
+			// and rate-limit to one dump a minute: a lobby countdown once changed the raw text
+			// every tick and dumped with it.
+			final StringBuilder candidates = new StringBuilder();
+			for (final String rawLine : hudText.split("\n"))
+			{
+				final String line = rawLine.trim();
+				if (!line.isEmpty() && !line.startsWith("-") && !line.matches(".*\\d+:\\d+.*"))
+				{
+					candidates.append(line).append('|');
+				}
+			}
+			final int hash = candidates.toString().hashCode();
+			if (hash != lastBhHudTextHash && client.getTickCount() - lastBhHudDumpTick > 100
+				&& candidates.length() > 0)
 			{
 				lastBhHudTextHash = hash;
-				if (!hudText.trim().isEmpty())
-				{
-					log.debug("BH hud text (no target parsed, interface {}): {}",
-						group, hudText.replace('\n', '|'));
-				}
+				lastBhHudDumpTick = client.getTickCount();
+				log.debug("BH hud text (no target parsed, interface {}): {}", group, candidates);
 			}
 			lastBhTargetName = null; // no readable target — re-arm for the next assignment
 			return;
@@ -731,7 +740,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			lastBhTargetName = name;
 			pendingAutoFocusName = name;
 			log.debug("BH target detected on the HUD: {}", name);
-			SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
+			// Only jump the sidebar when this is genuinely a new opponent — a target walking
+			// out of render range and back must not keep re-opening the panel mid-fight.
+			if (!name.equals(opponentTracker.focusedName()))
+			{
+				SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
+			}
 		}
 		if (pendingAutoFocusName != null)
 		{
