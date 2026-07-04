@@ -48,6 +48,7 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -648,6 +649,27 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	private void maybeAutoFocusBhTarget()
 	{
+		// Until the hub is pinned, periodically sweep every LOADED interface for its idle text —
+		// the WidgetLoaded probe misses a hub that loaded before the plugin was watching, and an
+		// in-game session proved the group-90 assumption alone isn't enough.
+		if (bhHudGroup < 0 && client.getTickCount() % 5 == 0)
+		{
+			for (final Widget root : client.getWidgetRoots())
+			{
+				if (root == null)
+				{
+					continue;
+				}
+				final StringBuilder rootText = new StringBuilder();
+				collectText(root, rootText, 0);
+				if (rootText.toString().toLowerCase().contains("no target"))
+				{
+					bhHudGroup = WidgetUtil.componentToInterface(root.getId());
+					log.debug("BH target hub found by sweep: interface {}", bhHudGroup);
+					break;
+				}
+			}
+		}
 		final StringBuilder sb = new StringBuilder();
 		final int group = bhHudGroup >= 0 ? bhHudGroup : InterfaceID.PVP_ICONS;
 		for (int child = 0; child < 80; child++)
