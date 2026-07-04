@@ -63,7 +63,18 @@ toggleable on its own — and a side-panel section then track:
 - **Smite value** — what losing Protect Item would additionally expose.
 - **Hit chance and max hit** — your current setup (gear, boosts, prayers, selected combat style)
   against their hiscore levels and visible defence bonuses, using the standard OSRS formulas. Magic
-  max hits are spell-dependent and shown as such rather than guessed.
+  max hits are spell-dependent and shown as such rather than guessed. The Eclipse atlatl is handled
+  properly: its damage scales with your Strength level and melee strength bonus, boosted by ranged
+  prayers.
+- **Special attacks** — light your spec bar and the max-hit line switches to the special attack's
+  ceiling for the common PvP spec weapons (dragon claws show the combo total, the dark bow knows
+  when dragon arrows are loaded). Unknown weapons keep showing the normal number.
+- **Combat-stat preview** — the side panel shows their hiscore levels (Attack/Strength/Defence,
+  Ranged/Magic/Hitpoints, Prayer) plus the records that read a player at a glance: Bounty Hunter
+  target and rogue kills, Colosseum glory, TzKal-Zuk and Sol Heredit kill counts.
+- **Auto-focus on a new target** — the moment a Bounty Hunter target is assigned, the side panel
+  opens and they become the focused opponent automatically. Toggleable; if you run PvP Performance
+  Tracker, turn its auto-open off so the two don't fight over the sidebar.
 
 The estimates deliberately assume a strong opponent: Protect Item on, a super combat potion, and the
 best defensive prayer their Prayer level allows (Piety-tier from 70, Chivalry from 60, the Skin line
