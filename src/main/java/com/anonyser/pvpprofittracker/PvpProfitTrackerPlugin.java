@@ -1112,7 +1112,19 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private int keptCount()
 	{
 		final int base = isSkulled() ? 0 : 3;
-		return base + (client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1 ? 1 : 0);
+		return base + (protectItemOn() ? 1 : 0);
+	}
+
+	/** Whether the Protect Item prayer is active right now. Game-thread only (varbit read). */
+	boolean protectItemOn()
+	{
+		return client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
+	}
+
+	/** Whether the player is inside the Wilderness. Game-thread only (varbit read). */
+	boolean inWilderness()
+	{
+		return client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1;
 	}
 
 	private boolean isSkulled()

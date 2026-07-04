@@ -179,12 +179,28 @@ public interface PvpProfitTrackerConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "showProtectItem",
+		name = "Protect Item status",
+		description = "Show (On) or (Off) next to the Risk value. On or Off"
+			+ "<br>signifies whether Protect Item is currently enabled."
+			+ "<br>If you enter the Wilderness with Protect Item off, Off"
+			+ "<br>will glow red. If Protect Item is on, On will appear"
+			+ "<br>green.",
+		position = 6,
+		section = trackersSection
+	)
+	default boolean showProtectItem()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "showNetWorth",
 		name = "Net worth",
 		description = "Total account value (bank + worn + inventory)."
 			+ "<br>Informational only — never counts toward profit."
 			+ "<br>Open your bank to record it.",
-		position = 6,
+		position = 7,
 		section = trackersSection
 	)
 	default boolean showNetWorth()
@@ -196,7 +212,7 @@ public interface PvpProfitTrackerConfig extends Config
 		keyName = "showSessionCrates",
 		name = "Session crates",
 		description = "Bounty Hunter crates received this session." + MODES,
-		position = 7,
+		position = 8,
 		section = trackersSection
 	)
 	default boolean showSessionCrates()
@@ -209,7 +225,7 @@ public interface PvpProfitTrackerConfig extends Config
 		name = "Baseline crates",
 		description = "Bounty Hunter crates received since you last reset"
 			+ "<br>the baseline." + MODES,
-		position = 8,
+		position = 9,
 		section = trackersSection
 	)
 	default boolean showBaselineCrates()
@@ -223,7 +239,7 @@ public interface PvpProfitTrackerConfig extends Config
 		description = "Your actual Bounty Hunter points balance, straight"
 			+ "<br>from the game — goes down when you spend."
 			+ "<br>Session/baseline track points gained instead.",
-		position = 9,
+		position = 10,
 		section = trackersSection
 	)
 	default boolean showCurrentPoints()
@@ -236,7 +252,7 @@ public interface PvpProfitTrackerConfig extends Config
 		name = "Baseline points",
 		description = "Bounty Hunter points gained since you last reset"
 			+ "<br>the baseline." + MODES,
-		position = 10,
+		position = 11,
 		section = trackersSection
 	)
 	default boolean showBaselinePoints()
@@ -249,7 +265,7 @@ public interface PvpProfitTrackerConfig extends Config
 		name = "Session points",
 		description = "Bounty Hunter points gained this session"
 			+ "<br>(read from the game's own points value)." + MODES,
-		position = 11,
+		position = 12,
 		section = trackersSection
 	)
 	default boolean showSessionPoints()

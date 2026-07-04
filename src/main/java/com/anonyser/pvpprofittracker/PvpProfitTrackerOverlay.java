@@ -16,6 +16,8 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 class PvpProfitTrackerOverlay extends OverlayPanel
 {
 	private static final Color FLASH_COLOR = new Color(255, 200, 60);
+	private static final Color PROTECT_ON_COLOR = new Color(0, 200, 83);
+	private static final Color PROTECT_OFF_COLOR = new Color(216, 60, 62);
 
 	private final PvpProfitTrackerPlugin plugin;
 	private final PvpProfitTrackerConfig config;
@@ -71,7 +73,20 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		}
 		if (config.showRisk())
 		{
-			addLine("Risk", plugin.fmt(plugin.getRiskGp()), null);
+			String risk = plugin.fmt(plugin.getRiskGp());
+			Color riskColor = null;
+			if (config.showProtectItem())
+			{
+				// Protect Item at a glance: neutral outside the Wilderness, green/red inside —
+				// where walking in with it off is the mistake this exists to catch.
+				final boolean on = plugin.protectItemOn();
+				risk += on ? " (On)" : " (Off)";
+				if (plugin.inWilderness())
+				{
+					riskColor = on ? PROTECT_ON_COLOR : PROTECT_OFF_COLOR;
+				}
+			}
+			addLine("Risk", risk, riskColor);
 		}
 		if (config.showNetWorth())
 		{
