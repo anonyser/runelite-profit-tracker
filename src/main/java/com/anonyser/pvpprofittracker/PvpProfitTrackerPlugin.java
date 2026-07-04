@@ -116,13 +116,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	}
 
 	// Bounty Hunter worlds replace the skull slot with risk-tier icons — one band of ids for
-	// unskulled players, one for skulled, pairing tier-for-tier at +8 — none of them named in the
-	// API. Verified in-game (2026-07-02): 21–24 unskulled (every death is followed by one of them
-	// on respawn; the death screen showed keep-3 on 22), 29–32 skulled during fights. Only the
-	// verified unskulled band is whitelisted; 25–28 (never observed) stay default-skulled until
-	// the death screen teaches them (see calibrateSkullFromDeathScreen).
+	// unskulled players, one for skulled, none of them named in the API. Verified in-game:
+	// 21–24 unskulled and 29–32 skulled (2026-07-02); on 2026-07-04 a tracked opponent went
+	// skulled icon 28 → died → unskulled icon 21 with a sub-200k kit both sides, anchoring
+	// bronze at 21/28 — so the bands are 21–25 unskulled / 28–32 skulled (+7, not the +8 first
+	// guessed). 25 (unskulled red) is whitelisted from that scheme; if the inference is ever
+	// wrong the death screen re-teaches it (see calibrateSkullFromDeathScreen).
 	private static final int BH_UNSKULLED_FIRST = 21;
-	private static final int BH_UNSKULLED_LAST = 24;
+	private static final int BH_UNSKULLED_LAST = 25;
 
 	// PvP loot keys (held in the inventory) and the Deadman containers their contents live in.
 	private static final int[] LOOT_KEYS = {

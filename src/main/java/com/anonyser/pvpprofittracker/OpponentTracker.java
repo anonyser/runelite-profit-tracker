@@ -37,13 +37,14 @@ class OpponentTracker
 		KitType.TORSO, KitType.SHIELD, KitType.LEGS, KitType.HANDS, KitType.BOOTS,
 	};
 
-	// Bounty Hunter risk-tier icons replace the skull slot on BH worlds. 21–24 (unskulled) and
-	// 29–32 (skulled, paired tier-for-tier at +8) are in-game-verified; the wiki lists five tiers
-	// — bronze, iron, green, blue, red — so each band is taken as 20–24 / 28–32 with the
-	// never-yet-observed bronze ids inferred. The floors are the wiki's tier minimums: a tier icon
-	// is the game's own statement that the player risks at least that much, inventory included —
-	// often more than their visible gear alone adds up to.
-	private static final int BH_UNSKULLED_FIRST = 20;
+	// Bounty Hunter risk-tier icons replace the skull slot on BH worlds. Bands calibrated from
+	// live data (2026-07-04): one player was watched going skulled icon 28 → died with a sub-200k
+	// tradeable kit (83k actually dropped) → respawned unskulled as icon 21 in equally cheap gear
+	// — anchoring BRONZE at 21 (unskulled) and 28 (skulled), a +7 band offset. With the wiki's
+	// five tiers that gives 21–25 unskulled / 28–32 skulled; 29–32 were already fight-verified.
+	// The floors are the wiki's tier minimums, and per the wiki the game's tier maths ignores
+	// untradeables — so it floors the TRADEABLE side of the risk, which is exactly how it's used.
+	private static final int BH_UNSKULLED_FIRST = 21;
 	private static final int BH_SKULLED_FIRST = 28;
 	private static final int BH_TIER_COUNT = 5;
 	private static final String[] BH_TIER_NAMES = {"Bronze", "Iron", "Green", "Blue", "Red"};
