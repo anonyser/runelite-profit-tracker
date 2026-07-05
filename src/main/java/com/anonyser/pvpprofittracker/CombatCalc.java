@@ -91,7 +91,7 @@ class CombatCalc
 		SPEC_MAX.put(23987, new double[]{1.1, 1, 0});   // crystal halberd
 	}
 
-	/** Reads all game state on the client thread; the returned estimate is immutable. */
+	/** Reads all game state on the client thread; the returned value is immutable. */
 	private final Client client;
 	private final ItemManager itemManager;
 	// Change-detection for the spec debug line (client thread only).
@@ -111,7 +111,7 @@ class CombatCalc
 	}
 
 	/** One coherent read of the player's own numbers; fields final for EDT safety. */
-	static final class Estimate
+	static final class MaxHitInfo
 	{
 		final Style style;
 		final String styleName;   // display text, e.g. "Melee" or "Ranged (atlatl)"
@@ -121,7 +121,7 @@ class CombatCalc
 		final int specHits;       // hits per spec (2 for dds, etc.)
 		final boolean specTotal;  // specMaxHit is the whole combo's ceiling (claws)
 
-		Estimate(Style style, String styleName, int maxHit, boolean specActive, int specMaxHit,
+		MaxHitInfo(Style style, String styleName, int maxHit, boolean specActive, int specMaxHit,
 			int specHits, boolean specTotal)
 		{
 			this.style = style;
@@ -154,7 +154,7 @@ class CombatCalc
 	}
 
 	/** Compute the player's current max hit. Client thread only. */
-	Estimate ownEstimate()
+	MaxHitInfo ownMaxHit()
 	{
 		final Stance stance = currentStance();
 		final Bonuses mine = worn();
@@ -233,7 +233,7 @@ class CombatCalc
 			log.debug("spec state: active={} weapon={} specMax={}", specActive, weaponId, specMaxHit);
 		}
 
-		return new Estimate(style, styleName, maxHit, specActive, specMaxHit, specHits, specTotal);
+		return new MaxHitInfo(style, styleName, maxHit, specActive, specMaxHit, specHits, specTotal);
 	}
 
 	// --- The player's selected combat style, from the game's own weapon-style data ---

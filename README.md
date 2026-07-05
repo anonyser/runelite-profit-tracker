@@ -55,7 +55,7 @@ Most values come in up to three flavours, each toggleable:
 Right-click another player and choose **Inspect** to see their worn equipment on the side panel,
 laid out like the game's equipment tab, with the GE price of each item shown on hover. This is
 the same information Equipment Inspector has shown for years. Ammo and ring never render on
-another player, so those two slots are crossed out. There is no total and nothing is estimated:
+another player, so those two slots are crossed out. There is no total and nothing is calculated for you:
 any adding up is yours to do.
 
 Receiving a Bounty Hunter target runs an automatic stat lookup, the same behaviour as the core

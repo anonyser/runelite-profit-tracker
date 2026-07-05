@@ -90,7 +90,7 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 		}
 		if (config.showMaxHit())
 		{
-			final CombatCalc.Estimate est = plugin.combatEstimate();
+			final CombatCalc.MaxHitInfo est = plugin.maxHitInfo();
 			if (est != null && est.maxHit >= 0)
 			{
 				addLine(est.specShown() ? "Max hit (spec)" : "Max hit", est.maxHitText(), null);

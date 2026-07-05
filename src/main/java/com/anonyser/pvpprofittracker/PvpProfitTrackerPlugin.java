@@ -218,7 +218,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private OpponentTracker opponentTracker;
 	private CombatCalc combatCalc;
 	// Written on the client thread each tick; volatile so the overlay/panel read a coherent one.
-	private volatile CombatCalc.Estimate combatEstimate;
+	private volatile CombatCalc.MaxHitInfo maxHitInfo;
 	// Auto-focus: the target name last read off the BH HUD, and one still awaiting a scene match.
 	private String lastBhTargetName;
 	private String pendingAutoFocusName;
@@ -339,7 +339,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			overlay = null;
 			opponentTracker = null;
 			combatCalc = null;
-			combatEstimate = null;
+			maxHitInfo = null;
 			panel = null;
 			navButton = null;
 			heldLootKeyCount = 0;
@@ -611,7 +611,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// The player's OWN max hit, re-read every tick: gear, prayers and boosts all change
 		// without a single dedicated event.
-		combatEstimate = combatCalc != null && config.showMaxHit() ? combatCalc.ownEstimate() : null;
+		maxHitInfo = combatCalc != null && config.showMaxHit() ? combatCalc.ownMaxHit() : null;
 		if (!deathKeepCalibrated)
 		{
 			deathKeepCalibrated = calibrateSkullFromDeathScreen();
@@ -1444,17 +1444,17 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return keepPriorityFloor.getOrDefault(id, 0L);
 	}
 
-	/** Focused-opponent estimate for the side panel (EDT-safe snapshot; null = no focus). */
+	/** Focused-player gear/stat view for the side panel (EDT-safe snapshot; null = no focus). */
 	OpponentTracker.Snapshot opponentSnapshot()
 	{
 		final OpponentTracker t = opponentTracker;
 		return t == null ? null : t.snapshot();
 	}
 
-	/** Current hit-chance/max-hit estimate against the focused opponent (null = none). */
-	CombatCalc.Estimate combatEstimate()
+	/** The player's own current max hit (null when the line is hidden). */
+	CombatCalc.MaxHitInfo maxHitInfo()
 	{
-		return combatEstimate;
+		return maxHitInfo;
 	}
 
 	/** Item sprite for the side panel — async, so safe to request from the EDT. */
@@ -1478,7 +1478,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			{
 				opponentTracker.clear();
 			}
-			combatEstimate = null;
+			maxHitInfo = null;
 		});
 	}
 
@@ -1506,7 +1506,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 * Hunter worlds, risk-tier icons with separate unskulled and skulled bands (unnamed in the
 	 * API; see BH_UNSKULLED_FIRST). Ids the game's own Items Kept on Death screen has
 	 * contradicted are taken from the learned map instead. Anything still unknown is treated
-	 * as skulled, the safer direction for a risk estimate.
+	 * as skulled, the safer direction for the risk value.
 	 */
 	boolean isSkullIconSkulled(int icon)
 	{
