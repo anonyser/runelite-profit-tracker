@@ -340,13 +340,27 @@ class PvpProfitTrackerPanel extends PluginPanel
 			refresh();
 		}
 
+		// The equipment-tab arrangement, row by row: helm / cape·amulet·ammo / weapon·torso·shield
+		// / legs / gloves·boots·ring. Values index into VISIBLE_SLOTS; -1 = spacer, -2 = a slot
+		// that exists but can never be seen on another player (ammo, ring), shown crossed out.
+		private final int[] cellSlot = {
+			-1, 0, -1,
+			1, 2, -2,
+			3, 4, 5,
+			-1, 6, -1,
+			7, 8, -2,
+		};
+		private final String[] slotNames = {
+			"Head", "Cape", "Amulet", "Weapon", "Torso", "Shield", "Legs", "Gloves", "Boots",
+		};
+
 		private JPanel newGrid()
 		{
-			// Five icons per row (a FlowLayout would report a one-row height in this BoxLayout
-			// column and clip the wrap).
-			final JPanel grid = new JPanel(new java.awt.GridLayout(0, 5, 2, 2));
+			// Laid out like the game's own equipment tab (5 rows × 3 columns).
+			final JPanel grid = new JPanel(new java.awt.GridLayout(5, 3, 2, 2));
 			grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+			grid.setMaximumSize(new java.awt.Dimension(3 * 40 + 4, 5 * 36 + 8));
 			return grid;
 		}
 
@@ -389,17 +403,30 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private void populateGrid(int[] ids, String[] names, long[] prices)
 		{
 			wornGrid.removeAll();
-			for (int i = 0; i < ids.length; i++)
+			for (final int slot : cellSlot)
 			{
-				if (ids[i] <= 0)
+				final JLabel cell = new JLabel();
+				cell.setHorizontalAlignment(JLabel.CENTER);
+				cell.setPreferredSize(new java.awt.Dimension(38, 34));
+				if (slot == -2)
 				{
-					continue;
+					// Ammo and ring exist on the real equipment tab but never render on another
+					// player — crossed out rather than hidden so the layout reads at a glance.
+					cell.setText("✕");
+					cell.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+					cell.setToolTipText("Not visible on other players");
 				}
-				final JLabel icon = new JLabel();
-				icon.setToolTipText("<html>" + (names[i] == null ? "?" : names[i]) + "<br>"
-					+ plugin.fmt(prices[i]) + " (GE)</html>");
-				plugin.itemIcon(ids[i]).addTo(icon);
-				wornGrid.add(icon);
+				else if (slot >= 0 && ids != null && slot < ids.length && ids[slot] > 0)
+				{
+					cell.setToolTipText("<html>" + (names[slot] == null ? "?" : names[slot]) + "<br>"
+						+ plugin.fmt(prices[slot]) + " (GE)</html>");
+					plugin.itemIcon(ids[slot]).addTo(cell);
+				}
+				else if (slot >= 0)
+				{
+					cell.setToolTipText(slotNames[slot] + ": nothing visible");
+				}
+				wornGrid.add(cell);
 			}
 		}
 	}
