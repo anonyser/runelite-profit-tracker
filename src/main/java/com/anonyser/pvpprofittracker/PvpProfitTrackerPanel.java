@@ -328,6 +328,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel colosseumRow = rowLabel(null);
 		private final JLabel zukRow = rowLabel(null);
 		private final JLabel solRow = rowLabel(null);
+		private final JLabel gearHint = noteLabel();
 		private final JPanel wornGrid = newGrid();
 		private final JLabel totalRow = rowLabel("Sum of the visible items' GE prices — the same "
 			+ "total Equipment Inspector shows.");
@@ -359,6 +360,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 			add(colosseumRow);
 			add(zukRow);
 			add(solRow);
+			gearHint.setText("<html>Right-click them and choose <b>Inspect</b> to view gear.</html>");
+			add(gearHint);
 			add(wornGrid);
 			add(totalRow);
 			add(clearBtn);
@@ -409,8 +412,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 			magicRow.setVisible(has);
 			hitpointsRow.setVisible(has);
 			prayerRow.setVisible(has);
-			wornGrid.setVisible(has);
-			totalRow.setVisible(has);
+			final boolean gear = has && opp.gearShown;
+			gearHint.setVisible(has && !opp.gearShown);
+			wornGrid.setVisible(gear);
+			totalRow.setVisible(gear);
 			clearBtn.setVisible(has);
 			if (!has)
 			{
@@ -418,6 +423,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 				colosseumRow.setVisible(false);
 				zukRow.setVisible(false);
 				solRow.setVisible(false);
+				gearHint.setVisible(false);
 				populateGrid(new int[0], null, null);
 				lastWornIds = new int[]{};
 				revalidate();

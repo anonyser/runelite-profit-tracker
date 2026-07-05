@@ -45,6 +45,9 @@ class OpponentTracker
 	private HiscoreResult hiscore;
 	private int lastSeenTick;
 	private boolean visible;
+	// Gear shows only after a deliberate right-click Inspect, mirroring Equipment Inspector's
+	// manual flow. A Bounty Hunter target assignment pulls the hiscores alone.
+	private boolean gearEnabled;
 
 	/** Immutable view of the current gear, safe to read from the EDT (side panel). */
 	private volatile Snapshot snapshot;
@@ -69,7 +72,7 @@ class OpponentTracker
 		return name;
 	}
 
-	/** Focus a player. Re-selecting the current one just refreshes their gear. */
+	/** Manual right-click Inspect: focus a player with the gear view enabled. */
 	void focus(Player p)
 	{
 		final String pName = sanitizedName(p);
@@ -83,12 +86,13 @@ class OpponentTracker
 			name = pName;
 			log.debug("gear inspect focused: {}", pName);
 		}
+		gearEnabled = true;
 		refresh(p);
 	}
 
 	/**
-	 * Focus a player by name alone — a Bounty Hunter target read off the HUD before they're
-	 * anywhere near render distance. Gear fills in the moment they first render.
+	 * A Bounty Hunter target assignment: pull the hiscores by name, stats only. The gear view
+	 * stays off until the player is deliberately right-clicked and inspected.
 	 */
 	void focusName(String targetName)
 	{
@@ -100,7 +104,7 @@ class OpponentTracker
 		clear();
 		name = jagex;
 		lastSeenTick = client.getTickCount();
-		log.debug("gear inspect focused by name, not yet in scene: {}", jagex);
+		log.debug("target focused by name, stats only: {}", jagex);
 		recompute();
 	}
 
@@ -110,6 +114,7 @@ class OpponentTracker
 		equipped.clear();
 		hiscore = null;
 		visible = false;
+		gearEnabled = false;
 		snapshot = null;
 		if (lastChangeHash != 0)
 		{
@@ -128,7 +133,7 @@ class OpponentTracker
 	void refresh(Player p)
 	{
 		final PlayerComposition comp = p.getPlayerComposition();
-		if (comp != null)
+		if (gearEnabled && comp != null)
 		{
 			equipped.clear();
 			for (final KitType slot : VISIBLE_SLOTS)
@@ -243,7 +248,7 @@ class OpponentTracker
 			}
 		}
 
-		snapshot = new Snapshot(name, visible, ids, names, prices, total,
+		snapshot = new Snapshot(name, visible, gearEnabled, ids, names, prices, total,
 			hiscoreLevel(HiscoreSkill.ATTACK), hiscoreLevel(HiscoreSkill.STRENGTH),
 			hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.RANGED),
 			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
@@ -251,7 +256,7 @@ class OpponentTracker
 			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
 			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT));
 
-		final int changeHash = java.util.Objects.hash(name, visible,
+		final int changeHash = java.util.Objects.hash(name, visible, gearEnabled,
 			java.util.Arrays.hashCode(ids), hiscore != null);
 		if (changeHash != lastChangeHash)
 		{
@@ -265,6 +270,7 @@ class OpponentTracker
 	{
 		final String name;
 		final boolean visible;
+		final boolean gearShown;      // false until the player is manually right-click Inspected
 		final int[] equippedIds;      // VISIBLE_SLOTS order, -1 = empty
 		final String[] equippedNames; // parallel to equippedIds (null where empty)
 		final long[] equippedGe;      // parallel to equippedIds, plain GE price
@@ -283,13 +289,14 @@ class OpponentTracker
 		final int zukKc;
 		final int solHereditKc;
 
-		Snapshot(String name, boolean visible, int[] equippedIds, String[] equippedNames,
-			long[] equippedGe, long totalGe, int attack, int strength, int defence, int ranged,
-			int magic, int hitpoints, int prayer, int bhTargetKills, int bhRogueKills,
-			int colosseumGlory, int zukKc, int solHereditKc)
+		Snapshot(String name, boolean visible, boolean gearShown, int[] equippedIds,
+			String[] equippedNames, long[] equippedGe, long totalGe, int attack, int strength,
+			int defence, int ranged, int magic, int hitpoints, int prayer, int bhTargetKills,
+			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc)
 		{
 			this.name = name;
 			this.visible = visible;
+			this.gearShown = gearShown;
 			this.equippedIds = equippedIds;
 			this.equippedNames = equippedNames;
 			this.equippedGe = equippedGe;
