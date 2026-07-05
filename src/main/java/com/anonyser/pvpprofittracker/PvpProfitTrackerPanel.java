@@ -330,8 +330,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel solRow = rowLabel(null);
 		private final JLabel gearHint = noteLabel();
 		private final JPanel wornGrid = newGrid();
-		private final JLabel totalRow = rowLabel("Sum of the visible items' GE prices — the same "
-			+ "total Equipment Inspector shows.");
 		private final JButton clearBtn = button("Clear", plugin::clearOpponent);
 		private int[] lastWornIds = {};
 
@@ -363,7 +361,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 			gearHint.setText("<html>Right-click them and choose <b>Inspect</b> to view gear.</html>");
 			add(gearHint);
 			add(wornGrid);
-			add(totalRow);
 			add(clearBtn);
 			refresh();
 		}
@@ -415,7 +412,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 			final boolean gear = has && opp.gearShown;
 			gearHint.setVisible(has && !opp.gearShown);
 			wornGrid.setVisible(gear);
-			totalRow.setVisible(gear);
 			clearBtn.setVisible(has);
 			if (!has)
 			{
@@ -452,7 +448,6 @@ class PvpProfitTrackerPanel extends PluginPanel
 				lastWornIds = opp.equippedIds.clone();
 				populateGrid(opp.equippedIds, opp.equippedNames, opp.equippedGe);
 			}
-			totalRow.setText("Total (GE):  " + plugin.fmt(opp.totalGe));
 			revalidate();
 			repaint();
 		}

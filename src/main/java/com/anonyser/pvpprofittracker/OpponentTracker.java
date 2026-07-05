@@ -235,7 +235,6 @@ class OpponentTracker
 		final int[] ids = new int[VISIBLE_SLOTS.length];
 		final String[] names = new String[VISIBLE_SLOTS.length];
 		final long[] prices = new long[VISIBLE_SLOTS.length];
-		long total = 0;
 		for (int i = 0; i < VISIBLE_SLOTS.length; i++)
 		{
 			final Integer id = equipped.get(VISIBLE_SLOTS[i]);
@@ -244,11 +243,10 @@ class OpponentTracker
 			{
 				names[i] = plugin.itemName(ids[i]);
 				prices[i] = plugin.gePrice(ids[i]);
-				total += prices[i];
 			}
 		}
 
-		snapshot = new Snapshot(name, visible, gearEnabled, ids, names, prices, total,
+		snapshot = new Snapshot(name, visible, gearEnabled, ids, names, prices,
 			hiscoreLevel(HiscoreSkill.ATTACK), hiscoreLevel(HiscoreSkill.STRENGTH),
 			hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.RANGED),
 			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
@@ -273,8 +271,8 @@ class OpponentTracker
 		final boolean gearShown;      // false until the player is manually right-click Inspected
 		final int[] equippedIds;      // VISIBLE_SLOTS order, -1 = empty
 		final String[] equippedNames; // parallel to equippedIds (null where empty)
-		final long[] equippedGe;      // parallel to equippedIds, plain GE price
-		final long totalGe;           // sum of the visible items' GE prices
+		final long[] equippedGe;      // parallel to equippedIds, plain GE price per item — no
+		                              // total anywhere; any adding up is the player's own
 		// Public hiscore levels/scores, -1 until the lookup answers (or unranked).
 		final int attack;
 		final int strength;
@@ -290,7 +288,7 @@ class OpponentTracker
 		final int solHereditKc;
 
 		Snapshot(String name, boolean visible, boolean gearShown, int[] equippedIds,
-			String[] equippedNames, long[] equippedGe, long totalGe, int attack, int strength,
+			String[] equippedNames, long[] equippedGe, int attack, int strength,
 			int defence, int ranged, int magic, int hitpoints, int prayer, int bhTargetKills,
 			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc)
 		{
@@ -300,7 +298,6 @@ class OpponentTracker
 			this.equippedIds = equippedIds;
 			this.equippedNames = equippedNames;
 			this.equippedGe = equippedGe;
-			this.totalGe = totalGe;
 			this.attack = attack;
 			this.strength = strength;
 			this.defence = defence;

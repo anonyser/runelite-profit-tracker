@@ -35,8 +35,11 @@ Display-only. It reads game state and shows numbers; it never sends input or act
 - **Protect Item status** — `(On)` or `(Off)` beside the Risk value. Neutral colour outside the
   Wilderness; inside, `(Off)` glows red and `(On)` shows green, so walking in unprotected gets
   caught at a glance. Toggleable under **Trackers**.
-- **Opponent risk** — right-click a player and choose **Risk** to estimate what they're carrying,
-  your hit chance against them, and your max hit. See below.
+- **Your max hit** — on the overlay, from your gear, boosts, prayers and selected combat style.
+  With the special-attack bar lit it shows the spec's ceiling for the common PvP spec weapons,
+  and the Eclipse atlatl's Strength-based damage is handled properly. Your own numbers only.
+- **Gear inspect** — right-click a player and choose **Inspect** to see their worn equipment with
+  GE prices, or receive a Bounty Hunter target for an automatic hiscore stat lookup. See below.
 
 ## Tracking modes
 
@@ -47,46 +50,24 @@ Most values come in up to three flavours, each toggleable:
 - **Baseline** — a long-term tally that keeps saving across sessions until you reset it. Reset buttons
   live on the plugin's side panel (the green `$` icon in the sidebar).
 
-## Opponent risk
+## Gear inspect
 
-Right-click another player and choose **Risk** to focus them. A separate overlay — movable and
-toggleable on its own — and a side-panel section then track:
+Right-click another player and choose **Inspect** to see their worn equipment on the side panel,
+laid out like the game's equipment tab, with the GE price of each item shown on hover. This is
+the same information Equipment Inspector has shown for years. Ammo and ring never render on
+another player, so those two slots are crossed out. There is no total and nothing is estimated:
+any adding up is yours to do.
 
-- **Their visible gear** — worn equipment only. Another player's inventory is never visible, and the
-  plugin doesn't pretend otherwise. Items seen equipped during the fight stay in the pool after
-  they're switched away: the dragon claws they flashed two minutes ago are still in their inventory,
-  and still part of their risk.
-- **Estimated risk** — the seen-item pool valued with the same price chain as your own risk (your
-  price overrides win here too, and Bounty Hunter activation fees and repair costs apply), minus the
-  items they'd keep. On Bounty Hunter worlds the risk-tier skull (bronze / iron / green / blue / red)
-  sets a floor — it's the game's own statement of their minimum total risk, inventory included.
-- **Smite value** — what losing Protect Item would additionally expose.
-- **Hit chance and max hit** — your current setup (gear, boosts, prayers, selected combat style)
-  against their hiscore levels and visible defence bonuses, using the standard OSRS formulas. Magic
-  max hits are spell-dependent and shown as such rather than guessed. The Eclipse atlatl is handled
-  properly: its damage scales with your Strength level and melee strength bonus, boosted by ranged
-  prayers.
-- **Special attacks** — light your spec bar and the max-hit line switches to the special attack's
-  ceiling for the common PvP spec weapons (dragon claws show the combo total, the dark bow knows
-  when dragon arrows are loaded). Unknown weapons keep showing the normal number.
-- **Combat-stat preview** — the side panel shows their hiscore levels (Attack/Strength/Defence,
-  Ranged/Magic/Hitpoints, Prayer) plus the records that read a player at a glance: Bounty Hunter
-  target and rogue kills, Colosseum glory, TzKal-Zuk and Sol Heredit kill counts.
-- **Auto-focus on a new target** — the moment a Bounty Hunter target is assigned, the side panel
-  opens and they become the focused opponent automatically. Toggleable; if you run PvP Performance
-  Tracker, turn its auto-open off so the two don't fight over the sidebar.
-
-The estimates deliberately assume a strong opponent: Protect Item on, a super combat potion, and the
-best defensive prayer their Prayer level allows (Piety-tier from 70, Chivalry from 60, the Skin line
-below that). Unskulled opponents are assumed to protect their top 4 items; skulled, their single
-best. The overlay and panel say when a number rests on an assumption. Selecting another player moves
-the focus; **Clear** (right-click the overlay, or the side-panel button) drops it, and five minutes
-out of sight drops it automatically.
+Receiving a Bounty Hunter target runs an automatic stat lookup, the same behaviour as the core
+Hiscore plugin's "Bounty lookup" option: combat levels from the public hiscores, plus Bounty
+Hunter kills, Colosseum glory, TzKal-Zuk and Sol Heredit kill counts where ranked. The target's
+gear is not shown unless you right-click and Inspect them yourself. **Clear** on the side panel
+drops the focused player, and five minutes out of sight drops them automatically.
 
 ## Config
 
 Everything is toggleable under **Trackers**, number formatting (full `1,428,638` or compact `1.428M`)
-under **Display**, the opponent estimate under **Opponent risk**, and the Wilderness/PvP-only gate
+under **Display**, the gear inspect under **Opponent gear**, and the Wilderness/PvP-only gate
 under **Advanced**. The side panel shows the full
 breakdown, the baseline resets, and the crate-value flash when you open a crate.
 

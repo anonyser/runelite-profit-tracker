@@ -664,9 +664,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			.append("PvP Profit Tracker " + PLUGIN_VERSION + ": ")
 			.append(net.runelite.client.chat.ChatColorType.NORMAL)
 			.append("Protect Item now shows (On)/(Off) beside your Risk, your max hit is on the "
-				+ "overlay (spec-aware), and you can right-click Inspect a player, or get a Bounty "
-				+ "Hunter target, to see their worn gear with GE prices on the side panel. "
-				+ "Every piece is toggleable in the plugin settings.")
+				+ "overlay (spec-aware), and you can right-click Inspect a player to see their "
+				+ "worn gear with GE prices. A Bounty Hunter target gets an automatic stat "
+				+ "lookup, like the hiscore plugin's bounty lookup. Every piece is toggleable "
+				+ "in the plugin settings.")
 			.build();
 		chatMessageManager.queue(net.runelite.client.chat.QueuedMessage.builder()
 			.type(net.runelite.api.ChatMessageType.GAMEMESSAGE)
