@@ -38,9 +38,9 @@ public interface PvpProfitTrackerConfig extends Config
 	String trackersSection = "trackers";
 
 	@ConfigSection(
-		name = "Opponent risk",
-		description = "Estimate what a right-clicked opponent is risking"
-			+ "<br>from their visible gear, skull and Bounty Hunter tier.",
+		name = "Opponent gear",
+		description = "Inspect a right-clicked player's worn equipment with"
+			+ "<br>GE prices, Equipment Inspector style.",
 		position = 2
 	)
 	String opponentSection = "opponent";
@@ -281,17 +281,30 @@ public interface PvpProfitTrackerConfig extends Config
 		return true;
 	}
 
-	// --- Opponent risk ---
+	@ConfigItem(
+		keyName = "showMaxHit",
+		name = "Your max hit",
+		description = "Your current max hit on the overlay, from your gear,"
+			+ "<br>boosts, prayers and selected combat style. With the"
+			+ "<br>special-attack bar lit it shows the spec's ceiling for"
+			+ "<br>the common PvP spec weapons. Your own numbers only.",
+		position = 13,
+		section = trackersSection
+	)
+	default boolean showMaxHit()
+	{
+		return true;
+	}
+
+	// --- Opponent gear ---
 
 	@ConfigItem(
 		keyName = "opponentRisk",
-		name = "Enable opponent risk",
-		description = "Adds a Risk option to the right-click menu on players."
-			+ "<br>Selecting it focuses that player: their visible gear,"
-			+ "<br>estimated risk, smite value and protection assumptions"
-			+ "<br>are tracked live, including items seen equipped earlier"
-			+ "<br>in the fight. Only worn equipment is ever visible —"
-			+ "<br>inventories can't be read, so this is an estimate.",
+		name = "Enable gear inspect",
+		description = "Adds an Inspect option to the right-click menu on"
+			+ "<br>players. Selecting it shows their currently worn"
+			+ "<br>equipment on the side panel with the GE price of each"
+			+ "<br>item — the same information Equipment Inspector shows.",
 		position = 0,
 		section = opponentSection
 	)
@@ -301,114 +314,17 @@ public interface PvpProfitTrackerConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "showOpponentOverlay",
-		name = "Opponent overlay",
-		description = "Show the opponent-risk overlay on screen. It is a"
-			+ "<br>separate overlay, moved independently of the main"
-			+ "<br>PvP Profit overlay (alt-drag to move). Right-click it"
-			+ "<br>for a Clear option that drops the focused opponent."
-			+ "<br>The toggles below hide individual overlay lines.",
-		position = 1,
-		section = opponentSection
-	)
-	default boolean showOpponentOverlay()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowTier",
-		name = "Overlay: skull / BH tier",
-		description = "Their skull status, or the Bounty Hunter risk-tier"
-			+ "<br>colour on BH worlds.",
-		position = 2,
-		section = opponentSection
-	)
-	default boolean oppShowTier()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowSmite",
-		name = "Overlay: smite value",
-		description = "What losing Protect Item would additionally expose.",
-		position = 3,
-		section = opponentSection
-	)
-	default boolean oppShowSmite()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowProtected",
-		name = "Overlay: protected slots",
-		description = "How many items they are assumed to keep.",
-		position = 4,
-		section = opponentSection
-	)
-	default boolean oppShowProtected()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowHitChance",
-		name = "Overlay: style & hit chance",
-		description = "Your selected combat style and estimated chance"
-			+ "<br>to hit them, under the \"You vs them\" header.",
-		position = 5,
-		section = opponentSection
-	)
-	default boolean oppShowHitChance()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowMaxHit",
-		name = "Overlay: your max hit",
-		description = "Your current max hit with the gear, boosts, prayers"
-			+ "<br>and style you have right now, under the \"You vs them\""
-			+ "<br>header. Shows the reduced number too when their"
-			+ "<br>overhead prayer blocks your style.",
-		position = 6,
-		section = opponentSection
-	)
-	default boolean oppShowMaxHit()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "autoFocusTarget",
-		name = "Auto-focus new target",
-		description = "The moment a Bounty Hunter target is assigned, focus"
-			+ "<br>them as the opponent and open this plugin's side panel"
-			+ "<br>so their gear, risk and combat stats are one glance away."
+		name = "Auto-inspect new target",
+		description = "The moment a Bounty Hunter target is assigned, open"
+			+ "<br>this plugin's side panel showing their worn gear."
 			+ "<br>If PvP Performance Tracker is installed, turn its"
 			+ "<br>auto-open feature off so the two don't fight over the"
 			+ "<br>sidebar.",
-		position = 8,
+		position = 1,
 		section = opponentSection
 	)
 	default boolean autoFocusTarget()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "oppShowNotes",
-		name = "Overlay: assumption notes",
-		description = "The small grey lines explaining what the estimate"
-			+ "<br>assumes (protected items, defensive prayer/potion,"
-			+ "<br>tier floor). Untick for a compact overlay — the side"
-			+ "<br>panel keeps the assumptions either way.",
-		position = 7,
-		section = opponentSection
-	)
-	default boolean oppShowNotes()
 	{
 		return true;
 	}

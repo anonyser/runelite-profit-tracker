@@ -88,6 +88,14 @@ class PvpProfitTrackerOverlay extends OverlayPanel
 			}
 			addLine("Risk", risk, riskColor);
 		}
+		if (config.showMaxHit())
+		{
+			final CombatCalc.Estimate est = plugin.combatEstimate();
+			if (est != null && est.maxHit >= 0)
+			{
+				addLine(est.specShown() ? "Max hit (spec)" : "Max hit", est.maxHitText(), null);
+			}
+		}
 		if (config.showNetWorth())
 		{
 			addLine("Net worth", plugin.netWorthDisplay(), null);

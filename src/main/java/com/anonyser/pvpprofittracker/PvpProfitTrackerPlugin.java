@@ -55,7 +55,6 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
-import net.runelite.client.hiscore.HiscoreManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -201,9 +200,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private Gson gson;
 
 	@Inject
-	private HiscoreManager hiscoreManager;
-
-	@Inject
 	private net.runelite.client.chat.ChatMessageManager chatMessageManager;
 
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
@@ -214,9 +210,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private PvpProfitTrackerPanel panel;
 	private NavigationButton navButton;
 
-	// Focused-opponent risk estimation (right-click "Risk" on a player).
+	// Focused-player gear inspect (right-click "Inspect" on a player, or a BH target).
 	private OpponentTracker opponentTracker;
-	private OpponentRiskOverlay opponentOverlay;
 	private CombatCalc combatCalc;
 	// Written on the client thread each tick; volatile so the overlay/panel read a coherent one.
 	private volatile CombatCalc.Estimate combatEstimate;
@@ -305,10 +300,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
-			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updateOpponentPanel);
+			opponentTracker = new OpponentTracker(client, this, this::updateOpponentPanel);
 			combatCalc = new CombatCalc(client, itemManager);
-			opponentOverlay = new OpponentRiskOverlay(this, config, opponentTracker);
-			overlayManager.add(opponentOverlay);
 			panel = new PvpProfitTrackerPanel(this, config);
 			navButton = NavigationButton.builder()
 				.tooltip("PvP Profit Tracker")
@@ -338,10 +331,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			save();
 			overlayManager.remove(overlay);
-			overlayManager.remove(opponentOverlay);
 			clientToolbar.removeNavigation(navButton);
 			overlay = null;
-			opponentOverlay = null;
 			opponentTracker = null;
 			combatCalc = null;
 			combatEstimate = null;
@@ -518,7 +509,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			final Player p = en.getKey();
 			client.getMenu().createMenuEntry(en.getValue())
-				.setOption("Risk")
+				.setOption("Inspect")
 				.setTarget(entries[en.getValue()].getTarget())
 				.setType(MenuAction.RUNELITE)
 				.onClick(me ->
@@ -609,19 +600,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (opponentTracker != null && config.opponentRisk())
 		{
 			opponentTracker.onTick();
-			// Re-estimated every tick: the player's own gear, prayers and boosts are inputs too,
-			// and they change without any opponent-side event firing.
-			final CombatCalc.Estimate before = combatEstimate;
-			combatEstimate = combatCalc.estimate(opponentTracker.snapshot());
-			if (estimateDisplayChanged(before, combatEstimate))
-			{
-				updateOpponentPanel();
-			}
 			if (config.autoFocusTarget())
 			{
 				maybeAutoFocusBhTarget();
 			}
 		}
+		// The player's OWN max hit, re-read every tick: gear, prayers and boosts all change
+		// without a single dedicated event.
+		combatEstimate = combatCalc != null && config.showMaxHit() ? combatCalc.ownEstimate() : null;
 		if (!deathKeepCalibrated)
 		{
 			deathKeepCalibrated = calibrateSkullFromDeathScreen();
@@ -673,10 +659,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			.append(net.runelite.client.chat.ChatColorType.HIGHLIGHT)
 			.append("PvP Profit Tracker " + PLUGIN_VERSION + ": ")
 			.append(net.runelite.client.chat.ChatColorType.NORMAL)
-			.append("NEW opponent risk tools — right-click a player and choose Risk, or get a "
-				+ "Bounty Hunter target, to see their gear, estimated risk, smite value, stats and "
-				+ "your hit chance/max hit (spec-aware). Protect Item now shows (On)/(Off) beside "
-				+ "your Risk. Not your thing? Every piece is toggleable in the plugin settings.")
+			.append("Protect Item now shows (On)/(Off) beside your Risk, your max hit is on the "
+				+ "overlay (spec-aware), and you can right-click Inspect a player, or get a Bounty "
+				+ "Hunter target, to see their worn gear with GE prices on the side panel. "
+				+ "Every piece is toggleable in the plugin settings.")
 			.build();
 		chatMessageManager.queue(net.runelite.client.chat.QueuedMessage.builder()
 			.type(net.runelite.api.ChatMessageType.GAMEMESSAGE)
@@ -1472,6 +1458,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return itemManager.getImage(id);
 	}
 
+	/** Plain GE price for the gear-inspect view — Equipment Inspector parity, no overrides. */
+	long gePrice(int id)
+	{
+		return Math.max(0, itemManager.getItemPrice(id));
+	}
+
 	/** Drop the focused opponent. Safe from any thread (the panel's Clear button runs on the EDT). */
 	void clearOpponent()
 	{
@@ -2080,19 +2072,6 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
-	/** Whether the estimate's DISPLAYED numbers changed — the panel only redraws when they do. */
-	private static boolean estimateDisplayChanged(CombatCalc.Estimate a, CombatCalc.Estimate b)
-	{
-		if (a == null || b == null)
-		{
-			return a != b;
-		}
-		return Math.round(a.hitChance * 100) != Math.round(b.hitChance * 100)
-			|| a.maxHit != b.maxHit
-			|| a.specShown() != b.specShown()
-			|| a.specMaxHit != b.specMaxHit
-			|| !a.styleName.equals(b.styleName);
-	}
 
 	// --- Accessors for the overlay / panel ---
 
