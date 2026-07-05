@@ -6,6 +6,10 @@ import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.PlayerComposition;
 import net.runelite.api.kit.KitType;
+import net.runelite.client.hiscore.HiscoreEndpoint;
+import net.runelite.client.hiscore.HiscoreManager;
+import net.runelite.client.hiscore.HiscoreResult;
+import net.runelite.client.hiscore.HiscoreSkill;
 import net.runelite.client.util.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,12 +35,14 @@ class OpponentTracker
 	private static final int FORGET_TICKS = 500;
 
 	private final Client client;
+	private final HiscoreManager hiscoreManager;
 	private final PvpProfitTrackerPlugin plugin;
 	private final Runnable onChange; // fired when the published view materially changes
 
 	// All state is written on the client thread only. Readers off it use the snapshot.
 	private String name; // sanitized display name of the focused player; null = no focus
 	private final Map<KitType, Integer> equipped = new EnumMap<>(KitType.class);
+	private HiscoreResult hiscore;
 	private int lastSeenTick;
 	private boolean visible;
 
@@ -44,9 +50,11 @@ class OpponentTracker
 	private volatile Snapshot snapshot;
 	private int lastChangeHash;
 
-	OpponentTracker(Client client, PvpProfitTrackerPlugin plugin, Runnable onChange)
+	OpponentTracker(Client client, HiscoreManager hiscoreManager, PvpProfitTrackerPlugin plugin,
+		Runnable onChange)
 	{
 		this.client = client;
+		this.hiscoreManager = hiscoreManager;
 		this.plugin = plugin;
 		this.onChange = onChange;
 	}
@@ -100,6 +108,7 @@ class OpponentTracker
 	{
 		name = null;
 		equipped.clear();
+		hiscore = null;
 		visible = false;
 		snapshot = null;
 		if (lastChangeHash != 0)
@@ -178,6 +187,27 @@ class OpponentTracker
 			visible = false;
 			recompute();
 		}
+		if (hiscore == null)
+		{
+			// The public hiscores, same information as the core client's right-click Lookup.
+			// Returns the cached result, or null while the background fetch is still out.
+			hiscore = hiscoreManager.lookupAsync(name, HiscoreEndpoint.NORMAL);
+			if (hiscore != null)
+			{
+				log.debug("hiscores answered for {}", name);
+				recompute();
+			}
+		}
+	}
+
+	private int hiscoreLevel(HiscoreSkill skill)
+	{
+		if (hiscore == null)
+		{
+			return -1;
+		}
+		final net.runelite.client.hiscore.Skill s = hiscore.getSkill(skill);
+		return s == null ? -1 : s.getLevel();
 	}
 
 	private static String sanitizedName(Player p)
@@ -213,9 +243,16 @@ class OpponentTracker
 			}
 		}
 
-		snapshot = new Snapshot(name, visible, ids, names, prices, total);
+		snapshot = new Snapshot(name, visible, ids, names, prices, total,
+			hiscoreLevel(HiscoreSkill.ATTACK), hiscoreLevel(HiscoreSkill.STRENGTH),
+			hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.RANGED),
+			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
+			hiscoreLevel(HiscoreSkill.PRAYER), hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_HUNTER),
+			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
+			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT));
 
-		final int changeHash = java.util.Objects.hash(name, visible, java.util.Arrays.hashCode(ids));
+		final int changeHash = java.util.Objects.hash(name, visible,
+			java.util.Arrays.hashCode(ids), hiscore != null);
 		if (changeHash != lastChangeHash)
 		{
 			lastChangeHash = changeHash;
@@ -232,9 +269,24 @@ class OpponentTracker
 		final String[] equippedNames; // parallel to equippedIds (null where empty)
 		final long[] equippedGe;      // parallel to equippedIds, plain GE price
 		final long totalGe;           // sum of the visible items' GE prices
+		// Public hiscore levels/scores, -1 until the lookup answers (or unranked).
+		final int attack;
+		final int strength;
+		final int defence;
+		final int ranged;
+		final int magic;
+		final int hitpoints;
+		final int prayer;
+		final int bhTargetKills;
+		final int bhRogueKills;
+		final int colosseumGlory;
+		final int zukKc;
+		final int solHereditKc;
 
 		Snapshot(String name, boolean visible, int[] equippedIds, String[] equippedNames,
-			long[] equippedGe, long totalGe)
+			long[] equippedGe, long totalGe, int attack, int strength, int defence, int ranged,
+			int magic, int hitpoints, int prayer, int bhTargetKills, int bhRogueKills,
+			int colosseumGlory, int zukKc, int solHereditKc)
 		{
 			this.name = name;
 			this.visible = visible;
@@ -242,6 +294,18 @@ class OpponentTracker
 			this.equippedNames = equippedNames;
 			this.equippedGe = equippedGe;
 			this.totalGe = totalGe;
+			this.attack = attack;
+			this.strength = strength;
+			this.defence = defence;
+			this.ranged = ranged;
+			this.magic = magic;
+			this.hitpoints = hitpoints;
+			this.prayer = prayer;
+			this.bhTargetKills = bhTargetKills;
+			this.bhRogueKills = bhRogueKills;
+			this.colosseumGlory = colosseumGlory;
+			this.zukKc = zukKc;
+			this.solHereditKc = solHereditKc;
 		}
 	}
 }

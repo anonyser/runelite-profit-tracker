@@ -314,6 +314,20 @@ class PvpProfitTrackerPanel extends PluginPanel
 	{
 		private final JLabel hint = noteLabel();
 		private final JLabel nameRow = rowLabel("Cleared automatically after ~5 minutes out of sight.");
+		// Public hiscore levels, one per line — the same information as the core client's
+		// right-click Lookup on a player.
+		private final JLabel attackRow = rowLabel(null);
+		private final JLabel strengthRow = rowLabel(null);
+		private final JLabel defenceRow = rowLabel(null);
+		private final JLabel rangedRow = rowLabel(null);
+		private final JLabel magicRow = rowLabel(null);
+		private final JLabel hitpointsRow = rowLabel(null);
+		private final JLabel prayerRow = rowLabel(null);
+		private final JLabel bhKillsRow = rowLabel(
+			"Bounty Hunter kills from the hiscores: as the hunter · as the rogue.");
+		private final JLabel colosseumRow = rowLabel(null);
+		private final JLabel zukRow = rowLabel(null);
+		private final JLabel solRow = rowLabel(null);
 		private final JPanel wornGrid = newGrid();
 		private final JLabel totalRow = rowLabel("Sum of the visible items' GE prices — the same "
 			+ "total Equipment Inspector shows.");
@@ -334,6 +348,17 @@ class PvpProfitTrackerPanel extends PluginPanel
 				+ "Bounty Hunter target, to see their worn gear here.</html>");
 			add(hint);
 			add(nameRow);
+			add(attackRow);
+			add(strengthRow);
+			add(defenceRow);
+			add(rangedRow);
+			add(magicRow);
+			add(hitpointsRow);
+			add(prayerRow);
+			add(bhKillsRow);
+			add(colosseumRow);
+			add(zukRow);
+			add(solRow);
 			add(wornGrid);
 			add(totalRow);
 			add(clearBtn);
@@ -377,11 +402,22 @@ class PvpProfitTrackerPanel extends PluginPanel
 			final boolean has = opp != null;
 			hint.setVisible(!has);
 			nameRow.setVisible(has);
+			attackRow.setVisible(has);
+			strengthRow.setVisible(has);
+			defenceRow.setVisible(has);
+			rangedRow.setVisible(has);
+			magicRow.setVisible(has);
+			hitpointsRow.setVisible(has);
+			prayerRow.setVisible(has);
 			wornGrid.setVisible(has);
 			totalRow.setVisible(has);
 			clearBtn.setVisible(has);
 			if (!has)
 			{
+				bhKillsRow.setVisible(false);
+				colosseumRow.setVisible(false);
+				zukRow.setVisible(false);
+				solRow.setVisible(false);
 				populateGrid(new int[0], null, null);
 				lastWornIds = new int[]{};
 				revalidate();
@@ -390,6 +426,21 @@ class PvpProfitTrackerPanel extends PluginPanel
 			}
 
 			nameRow.setText(opp.name + (opp.visible ? "" : " (out of sight)"));
+			attackRow.setText("Attack:  " + lvl(opp.attack));
+			strengthRow.setText("Strength:  " + lvl(opp.strength));
+			defenceRow.setText("Defence:  " + lvl(opp.defence));
+			rangedRow.setText("Ranged:  " + lvl(opp.ranged));
+			magicRow.setText("Magic:  " + lvl(opp.magic));
+			hitpointsRow.setText("Hitpoints:  " + lvl(opp.hitpoints));
+			prayerRow.setText("Prayer:  " + lvl(opp.prayer));
+			bhKillsRow.setVisible(opp.bhTargetKills >= 0 || opp.bhRogueKills >= 0);
+			bhKillsRow.setText("BH kills:  T " + kc(opp.bhTargetKills) + "  ·  R " + kc(opp.bhRogueKills));
+			colosseumRow.setVisible(opp.colosseumGlory > 0);
+			colosseumRow.setText("Colosseum glory:  " + opp.colosseumGlory);
+			zukRow.setVisible(opp.zukKc > 0);
+			zukRow.setText("TzKal-Zuk KC:  " + opp.zukKc);
+			solRow.setVisible(opp.solHereditKc > 0);
+			solRow.setText("Sol Heredit KC:  " + opp.solHereditKc);
 			if (!java.util.Arrays.equals(lastWornIds, opp.equippedIds))
 			{
 				lastWornIds = opp.equippedIds.clone();
@@ -398,6 +449,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 			totalRow.setText("Total (GE):  " + plugin.fmt(opp.totalGe));
 			revalidate();
 			repaint();
+		}
+
+		/** A hiscore level for display: dash until the lookup answers. */
+		private String lvl(int level)
+		{
+			return level > 0 ? Integer.toString(level) : "—";
+		}
+
+		/** A hiscore activity score for display: dash when unranked. */
+		private String kc(int score)
+		{
+			return score >= 0 ? Integer.toString(score) : "—";
 		}
 
 		private void populateGrid(int[] ids, String[] names, long[] prices)

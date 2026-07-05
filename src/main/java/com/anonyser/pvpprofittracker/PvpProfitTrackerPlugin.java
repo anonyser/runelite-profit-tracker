@@ -55,6 +55,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.hiscore.HiscoreManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -200,6 +201,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private Gson gson;
 
 	@Inject
+	private HiscoreManager hiscoreManager;
+
+	@Inject
 	private net.runelite.client.chat.ChatMessageManager chatMessageManager;
 
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
@@ -300,7 +304,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
-			opponentTracker = new OpponentTracker(client, this, this::updateOpponentPanel);
+			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updateOpponentPanel);
 			combatCalc = new CombatCalc(client, itemManager);
 			panel = new PvpProfitTrackerPanel(this, config);
 			navButton = NavigationButton.builder()
