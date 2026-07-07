@@ -70,22 +70,24 @@ class CombatCalc
 		SPEC_MAX.put(13576, new double[]{1.5, 1, 0});   // dragon warhammer
 		SPEC_MAX.put(26710, new double[]{1.5, 1, 0});   // dragon warhammer (or)
 		SPEC_MAX.put(28035, new double[]{1.5, 1, 0});   // corrupted dragon warhammer (bh)
+		SPEC_MAX.put(27908, new double[]{1.25, 1, 0});  // Statius's warhammer (bh) — Smash, up to 125% max
 		SPEC_MAX.put(21003, new double[]{1.0, 1, 0});   // elder maul (accuracy-only spec)
 		SPEC_MAX.put(27100, new double[]{1.0, 1, 0});   // elder maul (or)
 		SPEC_MAX.put(27857, new double[]{1.5, 1, 0});   // dragon mace (bh)
 		SPEC_MAX.put(1305, new double[]{1.25, 1, 0});   // dragon longsword
 		SPEC_MAX.put(27859, new double[]{1.25, 1, 0});  // dragon longsword (bh)
 		SPEC_MAX.put(10887, new double[]{1.1, 1, 0});   // barrelchest anchor
-		SPEC_MAX.put(27855, new double[]{1.1, 1, 0});   // barrelchest anchor (bh)
+		SPEC_MAX.put(27855, new double[]{1.25, 1, 0});  // barrelchest anchor (bh) — Sunder +25% (imbued, vs +10% base)
 		final double[] abyDagger = {0.85, 2, 0};
 		SPEC_MAX.put(13265, abyDagger); // abyssal dagger
 		SPEC_MAX.put(13267, abyDagger); // abyssal dagger(p)
 		SPEC_MAX.put(13269, abyDagger); // abyssal dagger(p+)
 		SPEC_MAX.put(13271, abyDagger); // abyssal dagger(p++)
-		SPEC_MAX.put(27861, abyDagger); // abyssal dagger (bh)
-		SPEC_MAX.put(27863, abyDagger); // abyssal dagger (bh)(p)
-		SPEC_MAX.put(27865, abyDagger); // abyssal dagger (bh)(p+)
-		SPEC_MAX.put(27867, abyDagger); // abyssal dagger (bh)(p++)
+		final double[] abyDaggerBh = {0.95, 2, 0}; // imbue eases the spec damage penalty to -5% (vs the base -15%)
+		SPEC_MAX.put(27861, abyDaggerBh); // abyssal dagger (bh)
+		SPEC_MAX.put(27863, abyDaggerBh); // abyssal dagger (bh)(p)
+		SPEC_MAX.put(27865, abyDaggerBh); // abyssal dagger (bh)(p+)
+		SPEC_MAX.put(27867, abyDaggerBh); // abyssal dagger (bh)(p++)
 		SPEC_MAX.put(20849, new double[]{1.0, 1, 0});   // dragon thrownaxe (accuracy-only)
 		SPEC_MAX.put(3204, new double[]{1.1, 1, 0});    // dragon halberd
 		SPEC_MAX.put(23987, new double[]{1.1, 1, 0});   // crystal halberd

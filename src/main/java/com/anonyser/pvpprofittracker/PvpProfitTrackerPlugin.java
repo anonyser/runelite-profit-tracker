@@ -170,7 +170,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private static final Pattern BH_TARGET_LINE = Pattern.compile("(.+) \\((\\d{1,3})\\)");
 
 	// One-time in-game note after an update ships — keep in step with the build.gradle version.
-	private static final String PLUGIN_VERSION = "1.1.0";
+	private static final String PLUGIN_VERSION = "1.1.1";
 	private static final String K_ANNOUNCED = "announcedVersion";
 
 	// Drinking from the chugging barrel (confirmed in-game; distinct from the eat/drink 829).
@@ -520,6 +520,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 				{
 					opponentTracker.focus(p);
 					updateOpponentPanel();
+					// Inspecting a player also opens the side panel for the hiscore lookup, the same
+					// way an assigned Bounty Hunter target auto-opens it.
+					SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
 				});
 		}
 	}
@@ -663,11 +666,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			.append(net.runelite.client.chat.ChatColorType.HIGHLIGHT)
 			.append("PvP Profit Tracker " + PLUGIN_VERSION + ": ")
 			.append(net.runelite.client.chat.ChatColorType.NORMAL)
-			.append("Protect Item now shows (On)/(Off) beside your Risk, your max hit is on the "
-				+ "overlay (spec-aware), and you can right-click Inspect a player to see their "
-				+ "worn gear with GE prices. A Bounty Hunter target gets an automatic stat "
-				+ "lookup, like the hiscore plugin's bounty lookup. Every piece is toggleable "
-				+ "in the plugin settings.")
+			.append("right-click Inspect on a player now opens the side panel for the hiscore "
+				+ "lookup (it used to only open when you got a Bounty Hunter target), and the "
+				+ "special attack max hit is fixed for a few BH weapons: Statius warhammer, "
+				+ "barrelchest anchor and abyssal dagger.")
 			.build();
 		chatMessageManager.queue(net.runelite.client.chat.QueuedMessage.builder()
 			.type(net.runelite.api.ChatMessageType.GAMEMESSAGE)
