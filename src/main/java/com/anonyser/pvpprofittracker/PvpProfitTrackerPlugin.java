@@ -204,6 +204,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private HiscoreManager hiscoreManager;
 
 	@Inject
+	private net.runelite.client.game.SpriteManager spriteManager;
+
+	@Inject
 	private net.runelite.client.chat.ChatMessageManager chatMessageManager;
 
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
@@ -1463,6 +1466,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 	net.runelite.client.util.AsyncBufferedImage itemIcon(int id)
 	{
 		return itemManager.getImage(id);
+	}
+
+	/** Async-loads a game sprite onto a panel label — the same icons the core hiscore panel shows. */
+	void spriteIcon(javax.swing.JLabel label, int spriteId)
+	{
+		spriteManager.addSpriteTo(label, spriteId, 0);
 	}
 
 	/** Plain GE price for the gear-inspect view — Equipment Inspector parity, no overrides. */

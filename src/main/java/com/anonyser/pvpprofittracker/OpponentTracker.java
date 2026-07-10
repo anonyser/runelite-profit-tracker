@@ -48,6 +48,9 @@ class OpponentTracker
 	// Gear shows only after a deliberate right-click Inspect, mirroring Equipment Inspector's
 	// manual flow. A Bounty Hunter target assignment pulls the hiscores alone.
 	private boolean gearEnabled;
+	// True when this focus came from a Bounty Hunter target assignment (the panel shows the name
+	// in green). Inspecting the same player keeps it; focusing someone else resets it.
+	private boolean bhTarget;
 
 	/** Immutable view of the current gear, safe to read from the EDT (side panel). */
 	private volatile Snapshot snapshot;
@@ -103,6 +106,7 @@ class OpponentTracker
 		}
 		clear();
 		name = jagex;
+		bhTarget = true;
 		lastSeenTick = client.getTickCount();
 		log.debug("target focused by name, stats only: {}", jagex);
 		recompute();
@@ -115,6 +119,7 @@ class OpponentTracker
 		hiscore = null;
 		visible = false;
 		gearEnabled = false;
+		bhTarget = false;
 		snapshot = null;
 		if (lastChangeHash != 0)
 		{
@@ -246,7 +251,7 @@ class OpponentTracker
 			}
 		}
 
-		snapshot = new Snapshot(name, visible, gearEnabled, ids, names, prices,
+		snapshot = new Snapshot(name, visible, gearEnabled, bhTarget, ids, names, prices,
 			hiscoreLevel(HiscoreSkill.ATTACK), hiscoreLevel(HiscoreSkill.STRENGTH),
 			hiscoreLevel(HiscoreSkill.DEFENCE), hiscoreLevel(HiscoreSkill.RANGED),
 			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
@@ -254,7 +259,7 @@ class OpponentTracker
 			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
 			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT));
 
-		final int changeHash = java.util.Objects.hash(name, visible, gearEnabled,
+		final int changeHash = java.util.Objects.hash(name, visible, gearEnabled, bhTarget,
 			java.util.Arrays.hashCode(ids), hiscore != null);
 		if (changeHash != lastChangeHash)
 		{
@@ -269,6 +274,7 @@ class OpponentTracker
 		final String name;
 		final boolean visible;
 		final boolean gearShown;      // false until the player is manually right-click Inspected
+		final boolean bhTarget;       // true when this focus came from a BH target assignment
 		final int[] equippedIds;      // VISIBLE_SLOTS order, -1 = empty
 		final String[] equippedNames; // parallel to equippedIds (null where empty)
 		final long[] equippedGe;      // parallel to equippedIds, plain GE price per item — no
@@ -287,7 +293,7 @@ class OpponentTracker
 		final int zukKc;
 		final int solHereditKc;
 
-		Snapshot(String name, boolean visible, boolean gearShown, int[] equippedIds,
+		Snapshot(String name, boolean visible, boolean gearShown, boolean bhTarget, int[] equippedIds,
 			String[] equippedNames, long[] equippedGe, int attack, int strength,
 			int defence, int ranged, int magic, int hitpoints, int prayer, int bhTargetKills,
 			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc)
@@ -295,6 +301,7 @@ class OpponentTracker
 			this.name = name;
 			this.visible = visible;
 			this.gearShown = gearShown;
+			this.bhTarget = bhTarget;
 			this.equippedIds = equippedIds;
 			this.equippedNames = equippedNames;
 			this.equippedGe = equippedGe;
