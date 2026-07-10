@@ -410,9 +410,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel prayerCell = statCell("prayer", "Prayer");
 		private final JLabel magicCell = statCell("magic", "Magic");
 		private final JLabel hitpointsCell = statCell("hitpoints", "Hitpoints");
-		// Icon-only activity counts, using the same game sprites the core hiscore panel shows:
-		// green skull = BH kills as the hunter, red skull = as the rogue, then Zuk and Sol KC.
+		// Icon-only activity counts, using the same game sprites the core hiscore panel shows,
+		// split over two centered rows so a wide count never clips at the panel edge:
+		// green skull = BH kills as the hunter, red skull = as the rogue; then Zuk and Sol KC.
 		private final JPanel kcRow = new JPanel();
+		private final JPanel bossRow = new JPanel();
 		private final JLabel bhHunterCell = kcCell("Bounty Hunter kills as the hunter (your target).");
 		private final JLabel bhRogueCell = kcCell("Bounty Hunter kills as the rogue.");
 		private final JLabel zukCell = kcCell("TzKal-Zuk (Inferno) kill count.");
@@ -488,17 +490,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 			statsGear.add(wornGrid, c);
 			add(statsGear);
 
-			kcRow.setLayout(new BoxLayout(kcRow, BoxLayout.X_AXIS));
-			kcRow.setOpaque(false);
-			kcRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-			kcRow.add(bhHunterCell);
-			kcRow.add(horizontalGap());
-			kcRow.add(bhRogueCell);
-			kcRow.add(horizontalGap());
-			kcRow.add(zukCell);
-			kcRow.add(horizontalGap());
-			kcRow.add(solCell);
+			buildCenteredRow(kcRow, bhHunterCell, bhRogueCell);
 			add(kcRow);
+			buildCenteredRow(bossRow, zukCell, solCell);
+			add(bossRow);
 
 			combatRow = rowWith(captionLabel(
 				"Exact combat level from their hiscore stats — the game shows it floored, the decimals say how close the next level is."),
@@ -623,9 +618,28 @@ class PvpProfitTrackerPanel extends PluginPanel
 		{
 			final JPanel gap = new JPanel();
 			gap.setOpaque(false);
-			gap.setPreferredSize(new Dimension(10, 1));
-			gap.setMaximumSize(new Dimension(10, 22));
+			gap.setPreferredSize(new Dimension(14, 1));
+			gap.setMaximumSize(new Dimension(14, 26));
 			return gap;
+		}
+
+		/** Lays the cells out horizontally, centered by glue on both sides. */
+		private void buildCenteredRow(JPanel row, Component... cells)
+		{
+			row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+			row.setOpaque(false);
+			row.setAlignmentX(Component.LEFT_ALIGNMENT);
+			row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+			row.add(javax.swing.Box.createHorizontalGlue());
+			for (int i = 0; i < cells.length; i++)
+			{
+				if (i > 0)
+				{
+					row.add(horizontalGap());
+				}
+				row.add(cells[i]);
+			}
+			row.add(javax.swing.Box.createHorizontalGlue());
 		}
 
 		/** Update in place from the current snapshot. EDT only. */
@@ -649,6 +663,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			if (!has)
 			{
 				kcRow.setVisible(false);
+				bossRow.setVisible(false);
 				combatRow.setVisible(false);
 				wlRow.setVisible(false);
 				notesCaption.setVisible(false);
@@ -677,6 +692,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			zukCell.setText(kc(opp.zukKc));
 			solCell.setText(kc(opp.solHereditKc));
 			kcRow.setVisible(true);
+			bossRow.setVisible(true);
 			final double combat = combatLevel(opp);
 			combatValue.setText(combat > 0 ? String.format("%.2f", combat) : "—");
 			combatRow.setVisible(true);
