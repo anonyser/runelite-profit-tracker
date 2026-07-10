@@ -435,16 +435,37 @@ public class PvpProfitTrackerPlugin extends Plugin
 	public void onActorDeath(ActorDeath e)
 	{
 		final Player me = client.getLocalPlayer();
-		if (me == null || e.getActor() != me)
+		if (me == null)
 		{
 			return;
 		}
-		// Book the current at-risk value as the loss — it shows up as negative profit.
-		lastDeathTick = client.getTickCount();
-		// Never diff the inventory across a death: the wipe-and-restore shuffle looks like
-		// crates being opened and items appearing. Resync fresh from the next change instead.
-		inventorySynced = false;
-		recordDeath(riskGp);
+		final String focused = opponentTracker == null ? null : opponentTracker.focusedName();
+		if (e.getActor() == me)
+		{
+			// Book the current at-risk value as the loss — it shows up as negative profit.
+			lastDeathTick = client.getTickCount();
+			// Never diff the inventory across a death: the wipe-and-restore shuffle looks like
+			// crates being opened and items appearing. Resync fresh from the next change instead.
+			inventorySynced = false;
+			recordDeath(riskGp);
+			// W/L vs the focused opponent: only count the loss while they're actually
+			// in sight — dying somewhere else isn't their kill.
+			if (focused != null)
+			{
+				final OpponentTracker.Snapshot opp = opponentTracker.snapshot();
+				if (opp != null && opp.visible)
+				{
+					bumpOpponentRecord(focused, false);
+				}
+			}
+			return;
+		}
+		// Their death while focused = a win for you (name match is exact).
+		if (focused != null && e.getActor() instanceof Player
+			&& focused.equals(OpponentTracker.sanitizedName((Player) e.getActor())))
+		{
+			bumpOpponentRecord(focused, true);
+		}
 	}
 
 	@Subscribe
@@ -1472,6 +1493,79 @@ public class PvpProfitTrackerPlugin extends Plugin
 	void spriteIcon(javax.swing.JLabel label, int spriteId)
 	{
 		spriteManager.addSpriteTo(label, spriteId, 0);
+	}
+
+	// ---- per-opponent notes: keyed by sanitized player name, kept in config so
+	// they survive restarts and come back the next time you face that player ----
+
+	private static String noteKey(String playerName)
+	{
+		return "oppnote_" + playerName.toLowerCase().replaceAll("[^a-z0-9]", "_");
+	}
+
+	/** The saved note for this player, or an empty string. */
+	String opponentNote(String playerName)
+	{
+		final String note =
+			configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, noteKey(playerName));
+		return note == null ? "" : note;
+	}
+
+	/** Save (or clear, when blank) the note for this player. Safe from the EDT. */
+	void saveOpponentNote(String playerName, String text)
+	{
+		if (text == null || text.trim().isEmpty())
+		{
+			configManager.unsetConfiguration(PvpProfitTrackerConfig.GROUP, noteKey(playerName));
+		}
+		else
+		{
+			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, noteKey(playerName), text);
+		}
+	}
+
+	private static String wlKey(String playerName)
+	{
+		return "oppwl_" + playerName.toLowerCase().replaceAll("[^a-z0-9]", "_");
+	}
+
+	/** Your lifetime record against this player: [your kills on them, their kills on you]. */
+	int[] opponentRecord(String playerName)
+	{
+		final String s =
+			configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName));
+		if (s == null)
+		{
+			return new int[]{0, 0};
+		}
+		final String[] parts = s.split("/");
+		try
+		{
+			return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
+		}
+		catch (NumberFormatException | ArrayIndexOutOfBoundsException ex)
+		{
+			return new int[]{0, 0};
+		}
+	}
+
+	private void bumpOpponentRecord(String playerName, boolean win)
+	{
+		final int[] record = opponentRecord(playerName);
+		if (win)
+		{
+			record[0]++;
+		}
+		else
+		{
+			record[1]++;
+		}
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName),
+			record[0] + "/" + record[1]);
+		if (panel != null)
+		{
+			panel.updateOpponent();
+		}
 	}
 
 	/** Plain GE price for the gear-inspect view — Equipment Inspector parity, no overrides. */

@@ -220,7 +220,7 @@ class OpponentTracker
 		return s == null ? -1 : s.getLevel();
 	}
 
-	private static String sanitizedName(Player p)
+	static String sanitizedName(Player p)
 	{
 		final String n = p.getName();
 		return n == null ? null : Text.toJagexName(Text.removeTags(n));

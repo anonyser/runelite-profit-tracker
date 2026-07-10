@@ -41,6 +41,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		+ "<b>Baseline</b> — long-term tally, keeps saving until you reset it.</html>";
 	private static final Color FLASH_COLOR = new Color(255, 200, 60);
 	private static final Color TARGET_GREEN = new Color(60, 220, 90);
+	private static final Color LOSS_RED = new Color(235, 70, 60);
 	private static final Color VALUE_COLOR = Color.WHITE;
 
 	// Refresh bursts are coalesced: at most one per interval, with a trailing refresh so the last
@@ -416,6 +417,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel bhRogueCell = kcCell("Bounty Hunter kills as the rogue.");
 		private final JLabel zukCell = kcCell("TzKal-Zuk (Inferno) kill count.");
 		private final JLabel solCell = kcCell("Sol Heredit (Colosseum) kill count.");
+		// Exact (unfloored) combat level from their hiscore stats.
+		private final JLabel combatValue = valueLabel();
+		private final JPanel combatRow;
+		// Lifetime score vs this name: your kills on them – theirs on you.
+		private final JLabel wlValue = valueLabel();
+		private final JPanel wlRow;
+		// Free-form notes that stick to this player between sessions.
+		private final javax.swing.JTextArea notesArea = new javax.swing.JTextArea(3, 20);
+		private final JLabel notesCaption = captionLabel(
+			"Anything you type saves automatically and shows again next time you face this player.");
+		private String notesFor;
+		private boolean loadingNote;
 		private final JLabel gearHint = noteLabel();
 		private final JPanel wornGrid = newGrid();
 		private final JButton clearBtn = button("Clear", plugin::clearOpponent);
@@ -428,8 +441,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 			setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			setAlignmentX(Component.LEFT_ALIGNMENT);
 
+			// Centered header block: "Opponent" over the name, full width, so
+			// long names never crowd the caption.
 			nameCaption.setText("Opponent");
-			nameRow = rowWith(nameCaption, nameValue);
+			nameCaption.setHorizontalAlignment(JLabel.CENTER);
+			nameValue.setHorizontalAlignment(JLabel.CENTER);
+			nameValue.setFont(nameValue.getFont().deriveFont(Font.BOLD));
+			nameRow = new JPanel(new BorderLayout());
+			nameRow.setOpaque(false);
+			nameRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+			nameRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+			nameRow.add(nameCaption, BorderLayout.NORTH);
+			nameRow.add(nameValue, BorderLayout.CENTER);
 			add(nameRow);
 
 			hint.setText("<html>Right-click a player and choose <b>Inspect</b>, or get a "
@@ -476,6 +499,20 @@ class PvpProfitTrackerPanel extends PluginPanel
 			kcRow.add(horizontalGap());
 			kcRow.add(solCell);
 			add(kcRow);
+
+			combatRow = rowWith(captionLabel(
+				"Exact combat level from their hiscore stats — the game shows it floored, the decimals say how close the next level is."),
+				combatValue);
+			((JLabel) ((BorderLayout) combatRow.getLayout()).getLayoutComponent(BorderLayout.WEST))
+				.setText("Combat");
+			add(combatRow);
+
+			wlRow = rowWith(captionLabel(
+				"Times you've killed them vs times they've killed you — counted while this plugin runs, tied to this display name."),
+				wlValue);
+			((JLabel) ((BorderLayout) wlRow.getLayout()).getLayoutComponent(BorderLayout.WEST))
+				.setText("W / L");
+			add(wlRow);
 			plugin.spriteIcon(bhHunterCell,
 				net.runelite.client.hiscore.HiscoreSkill.BOUNTY_HUNTER_HUNTER.getSpriteId());
 			plugin.spriteIcon(bhRogueCell,
@@ -487,6 +524,50 @@ class PvpProfitTrackerPanel extends PluginPanel
 
 			gearHint.setText("<html>Right-click them and choose <b>Inspect</b> to view gear.</html>");
 			add(gearHint);
+
+			notesCaption.setText("Notes");
+			notesCaption.setAlignmentX(Component.LEFT_ALIGNMENT);
+			add(notesCaption);
+			notesArea.setLineWrap(true);
+			notesArea.setWrapStyleWord(true);
+			notesArea.setBackground(ColorScheme.DARK_GRAY_COLOR);
+			notesArea.setForeground(Color.WHITE);
+			notesArea.setCaretColor(Color.WHITE);
+			notesArea.setBorder(new EmptyBorder(4, 4, 4, 4));
+			notesArea.setAlignmentX(Component.LEFT_ALIGNMENT);
+			notesArea.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+			notesArea.setToolTipText(
+				"Anything you type saves automatically and shows again next time you face this player.");
+			notesArea.getDocument().addDocumentListener(new javax.swing.event.DocumentListener()
+			{
+				private void save()
+				{
+					if (!loadingNote && notesFor != null)
+					{
+						plugin.saveOpponentNote(notesFor, notesArea.getText());
+					}
+				}
+
+				@Override
+				public void insertUpdate(javax.swing.event.DocumentEvent e)
+				{
+					save();
+				}
+
+				@Override
+				public void removeUpdate(javax.swing.event.DocumentEvent e)
+				{
+					save();
+				}
+
+				@Override
+				public void changedUpdate(javax.swing.event.DocumentEvent e)
+				{
+					save();
+				}
+			});
+			add(notesArea);
+
 			add(clearBtn);
 			refresh();
 		}
@@ -568,6 +649,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 			if (!has)
 			{
 				kcRow.setVisible(false);
+				combatRow.setVisible(false);
+				wlRow.setVisible(false);
+				notesCaption.setVisible(false);
+				notesArea.setVisible(false);
+				notesFor = null;
 				gearHint.setVisible(false);
 				populateGrid(new int[0], null, null);
 				lastWornIds = new int[]{};
@@ -591,6 +677,25 @@ class PvpProfitTrackerPanel extends PluginPanel
 			zukCell.setText(kc(opp.zukKc));
 			solCell.setText(kc(opp.solHereditKc));
 			kcRow.setVisible(true);
+			final double combat = combatLevel(opp);
+			combatValue.setText(combat > 0 ? String.format("%.2f", combat) : "—");
+			combatRow.setVisible(true);
+			final int[] wl = plugin.opponentRecord(opp.name);
+			wlValue.setText(wl[0] + " – " + wl[1]);
+			wlValue.setForeground(
+				wl[0] > wl[1] ? TARGET_GREEN : wl[1] > wl[0] ? LOSS_RED : VALUE_COLOR);
+			wlRow.setVisible(true);
+			notesCaption.setVisible(true);
+			notesArea.setVisible(true);
+			// Load this player's saved note exactly once per focus change, so
+			// typing is never clobbered by the per-frame refresh.
+			if (!opp.name.equals(notesFor))
+			{
+				loadingNote = true;
+				notesArea.setText(plugin.opponentNote(opp.name));
+				loadingNote = false;
+				notesFor = opp.name;
+			}
 			if (!java.util.Arrays.equals(lastWornIds, opp.equippedIds))
 			{
 				lastWornIds = opp.equippedIds.clone();
@@ -604,6 +709,26 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private String lvl(int level)
 		{
 			return level > 0 ? Integer.toString(level) : "—";
+		}
+
+		/**
+		 * Exact combat level (the game floors it for display): 0.25 × (def + hp
+		 * + ⌊prayer/2⌋) plus the best of melee 0.325 × (att + str), ranged
+		 * 0.325 × ⌊3·ranged/2⌋, magic 0.325 × ⌊3·magic/2⌋. Needs all seven
+		 * hiscore stats; -1 until the lookup answers.
+		 */
+		private double combatLevel(OpponentTracker.Snapshot o)
+		{
+			if (o.attack <= 0 || o.strength <= 0 || o.defence <= 0 || o.ranged <= 0
+				|| o.magic <= 0 || o.hitpoints <= 0 || o.prayer <= 0)
+			{
+				return -1;
+			}
+			final double base = 0.25 * (o.defence + o.hitpoints + o.prayer / 2);
+			final double melee = 0.325 * (o.attack + o.strength);
+			final double ranged = 0.325 * (o.ranged + o.ranged / 2);
+			final double magic = 0.325 * (o.magic + o.magic / 2);
+			return base + Math.max(melee, Math.max(ranged, magic));
 		}
 
 		/** A hiscore activity score for display: dash when unranked. */
