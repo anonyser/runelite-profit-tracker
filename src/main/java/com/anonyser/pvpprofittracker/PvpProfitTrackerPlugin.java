@@ -2,11 +2,6 @@ package com.anonyser.pvpprofittracker;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.Instant;
@@ -60,6 +55,7 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
 import net.runelite.client.ui.overlay.OverlayManager;
 import org.slf4j.Logger;
@@ -68,7 +64,7 @@ import org.slf4j.LoggerFactory;
 @PluginDescriptor(
 	name = "PvP Profit Tracker",
 	description = "Tracks real PvP profit — loot-key gains minus what you lose on death and consumables — "
-		+ "with K/D, risk and net worth. Details and baseline resets on the side panel ($ icon)",
+		+ "with K/D, risk and net worth. Details and baseline resets on the side panel (skulls icon)",
 	tags = {"pvp", "profit", "loot", "kill", "death", "wilderness", "bounty", "risk"}
 )
 public class PvpProfitTrackerPlugin extends Plugin
@@ -2276,18 +2272,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private static BufferedImage icon()
 	{
-		final BufferedImage img = new BufferedImage(24, 24, BufferedImage.TYPE_INT_ARGB);
-		final Graphics2D g = img.createGraphics();
-		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		g.setColor(new Color(0, 200, 83));
-		g.fillOval(1, 1, 22, 22);
-		g.setColor(Color.WHITE);
-		g.setFont(new Font("SansSerif", Font.BOLD, 15));
-		final FontMetrics fm = g.getFontMetrics();
-		final String s = "$";
-		g.drawString(s, (24 - fm.stringWidth(s)) / 2, (24 - fm.getHeight()) / 2 + fm.getAscent());
-		g.dispose();
-		return img;
+		return ImageUtil.loadImageResource(PvpProfitTrackerPlugin.class, "icon.png");
 	}
 
 	@Provides
