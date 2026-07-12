@@ -85,6 +85,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// No known members: the one suspected case (Crimson kisten) turned out to be a genuinely
 	// tradeable 11M weapon the price feed didn't know yet. The learning stays as armor.
 	private static final long[][] KEEP_PRIORITY_DEFAULTS = {};
+	// Global (like the notes and W/L records it sits beside): every completed fight as JSON,
+	// oldest first, capped — the panel's Past Fights lists render from this.
+	private static final String K_FIGHT_HISTORY = "fighthistory";
+	// Global: display names previously fought, inspected or looked up, most recent first,
+	// capped — feeds the lookup field's autocomplete. The note/W-L keys can't serve this: they
+	// store names sanitized to lowercase-and-underscores, which can't be shown back to the user.
+	private static final String K_KNOWN_NAMES = "knownnames";
+	private static final int MAX_KNOWN_NAMES = 200;
 
 	// Bounty Hunter ancient-warrior gear is activated by feeding it coins; on a PvP death the
 	// killer receives the activation fee and the owner keeps the inactive item — so the fee IS
@@ -213,6 +221,14 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private PvpProfitTrackerPanel panel;
 	private NavigationButton navButton;
 
+	// Fight history + the known-name registry behind the lookup autocomplete (see
+	// K_FIGHT_HISTORY / K_KNOWN_NAMES). Each list is its own monitor: fights land on the
+	// client thread while the panel reads copies from the EDT.
+	private final List<FightHistory.Fight> fights = new ArrayList<>();
+	private final List<String> knownNames = new ArrayList<>();
+	// Bumped on every history change so the panel rebuilds its lists only when needed.
+	private volatile int fightRev;
+
 	// Focused-player gear inspect (right-click "Inspect" on a player, or a BH target).
 	private OpponentTracker opponentTracker;
 	private CombatCalc combatCalc;
@@ -300,6 +316,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			loadSkullIconMap();
 			loadKeepPriority();
 			loadPriceOverrides();
+			loadFightHistory();
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
@@ -335,6 +352,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			save();
 			overlayManager.remove(overlay);
 			clientToolbar.removeNavigation(navButton);
+			if (panel != null)
+			{
+				panel.shutdown(); // stop its Swing timers, or they'd hold the dead panel alive
+			}
 			overlay = null;
 			opponentTracker = null;
 			combatCalc = null;
@@ -1570,9 +1591,146 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName),
 			record[0] + "/" + record[1]);
+		recordFight(playerName, win);
 		if (panel != null)
 		{
 			panel.updateOpponent();
+		}
+	}
+
+	// ---- fight history + known names: everything the panel's Past Fights lists and the
+	// lookup autocomplete read. Only bumpOpponentRecord writes fights, so an entry exists
+	// exactly when a kill or death counted toward the W/L record. ----
+
+	private void loadFightHistory()
+	{
+		synchronized (fights)
+		{
+			fights.clear();
+			fights.addAll(FightHistory.parse(gson,
+				configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY)));
+		}
+		synchronized (knownNames)
+		{
+			knownNames.clear();
+			final String s = configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_KNOWN_NAMES);
+			if (s != null && !s.isEmpty())
+			{
+				try
+				{
+					final String[] arr = gson.fromJson(s, String[].class);
+					if (arr != null)
+					{
+						for (final String n : arr)
+						{
+							if (n != null)
+							{
+								knownNames.add(n);
+							}
+						}
+					}
+				}
+				catch (RuntimeException ex)
+				{
+					// Corrupt value — the registry refills itself as names are seen again.
+				}
+			}
+		}
+		fightRev++;
+	}
+
+	/** Changes whenever the fight history does — the panel rebuilds its lists off this. */
+	int fightRev()
+	{
+		return fightRev;
+	}
+
+	/** Every recorded fight, newest first. Safe from any thread. */
+	List<FightHistory.Fight> fightHistory()
+	{
+		synchronized (fights)
+		{
+			final List<FightHistory.Fight> out = new ArrayList<>(fights.size());
+			for (int i = fights.size() - 1; i >= 0; i--)
+			{
+				out.add(fights.get(i));
+			}
+			return out;
+		}
+	}
+
+	/** Recorded fights against this name (case-insensitive), newest first. Safe from any thread. */
+	List<FightHistory.Fight> fightsWith(String playerName)
+	{
+		final List<FightHistory.Fight> out = new ArrayList<>();
+		synchronized (fights)
+		{
+			for (int i = fights.size() - 1; i >= 0; i--)
+			{
+				final FightHistory.Fight f = fights.get(i);
+				if (f.name.equalsIgnoreCase(playerName))
+				{
+					out.add(f);
+				}
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Append the fight that just counted toward the W/L record. Client thread (reads the scene
+	 * for their combat level and the world type for the target/rogue context).
+	 */
+	private void recordFight(String playerName, boolean win)
+	{
+		final Player p = scenePlayerNamed(playerName);
+		final OpponentTracker.Snapshot opp = opponentTracker == null ? null : opponentTracker.snapshot();
+		final FightHistory.Fight f = new FightHistory.Fight(
+			playerName,
+			p != null ? p.getCombatLevel() : -1,
+			opp != null && opp.bhTarget,
+			client.getWorldType().contains(WorldType.BOUNTY),
+			win,
+			System.currentTimeMillis());
+		synchronized (fights)
+		{
+			FightHistory.append(fights, f);
+			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY,
+				FightHistory.serialize(gson, fights));
+		}
+		fightRev++;
+		rememberName(playerName);
+		log.debug("fight recorded: {} {} (cmb={}, target={}, bh={})",
+			win ? "WIN vs" : "LOSS to", playerName, f.cmb, f.target, f.bh);
+	}
+
+	/** Names previously fought, inspected or looked up, most recent first. Safe from any thread. */
+	List<String> knownNames()
+	{
+		synchronized (knownNames)
+		{
+			return new ArrayList<>(knownNames);
+		}
+	}
+
+	/** Move (or add) a display name to the front of the autocomplete registry. */
+	void rememberName(String playerName)
+	{
+		if (playerName == null || playerName.trim().isEmpty())
+		{
+			return;
+		}
+		final String name = playerName.trim();
+		synchronized (knownNames)
+		{
+			knownNames.removeIf(n -> n.equalsIgnoreCase(name));
+			knownNames.add(0, name);
+			while (knownNames.size() > MAX_KNOWN_NAMES)
+			{
+				knownNames.remove(knownNames.size() - 1);
+			}
+			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_KNOWN_NAMES,
+				gson.toJson(knownNames));
 		}
 	}
 

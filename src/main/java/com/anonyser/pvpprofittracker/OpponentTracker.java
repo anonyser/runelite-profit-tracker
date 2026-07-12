@@ -87,6 +87,7 @@ class OpponentTracker
 		{
 			clear();
 			name = pName;
+			plugin.rememberName(pName);
 			log.debug("gear inspect focused: {}", pName);
 		}
 		gearEnabled = true;
@@ -108,6 +109,7 @@ class OpponentTracker
 		name = jagex;
 		bhTarget = true;
 		lastSeenTick = client.getTickCount();
+		plugin.rememberName(jagex);
 		log.debug("target focused by name, stats only: {}", jagex);
 		recompute();
 	}
@@ -128,6 +130,7 @@ class OpponentTracker
 		name = jagex;
 		gearEnabled = true;
 		lastSeenTick = client.getTickCount();
+		plugin.rememberName(jagex);
 		log.debug("panel lookup: {}", jagex);
 		recompute();
 	}
@@ -165,6 +168,8 @@ class OpponentTracker
 		if (canonical != null && !canonical.equals(name))
 		{
 			name = canonical;
+			// The autocomplete registry keeps the real rendered casing, not the typed one.
+			plugin.rememberName(canonical);
 		}
 		final PlayerComposition comp = p.getPlayerComposition();
 		if (gearEnabled && comp != null)

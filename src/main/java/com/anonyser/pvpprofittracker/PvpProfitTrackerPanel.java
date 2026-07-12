@@ -3,17 +3,31 @@ package com.anonyser.pvpprofittracker;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.List;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
+import javax.swing.MenuElement;
+import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
@@ -54,6 +68,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 	private final Timer flashTick = new Timer(1000, e -> refresh()); // drives the crate-value countdown
 	private final Timer refreshSoon = new Timer(REBUILD_COALESCE_MS, e -> refresh());
 	private final Timer opponentSoon;
+	// Keeps the "x minutes ago" lines in the fight lists fresh while the panel is on screen.
+	private final Timer relTick;
 	private final OpponentSection opponentSection;
 	private long lastRefreshAt;
 	private long lastOpponentAt;
@@ -116,6 +132,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		opponentSection = new OpponentSection();
 		opponentSoon = new Timer(REBUILD_COALESCE_MS, e -> refreshOpponent());
 		opponentSoon.setRepeats(false);
+		relTick = new Timer(30_000, e -> opponentSection.updateRelativeTimes());
 		opponentHolder = holder(opponentSection);
 
 		profitBaselineRow = row("Baseline", MODES_TIP, profitBaseline);
@@ -189,6 +206,28 @@ class PvpProfitTrackerPanel extends PluginPanel
 				refreshSoon.start();
 			}
 		});
+	}
+
+	@Override
+	public void onActivate()
+	{
+		relTick.start();
+		opponentSection.updateRelativeTimes();
+	}
+
+	@Override
+	public void onDeactivate()
+	{
+		relTick.stop();
+	}
+
+	/** Plugin shutdown: stop the timers, or they'd keep the dead panel reachable and ticking. */
+	void shutdown()
+	{
+		relTick.stop();
+		flashTick.stop();
+		refreshSoon.stop();
+		opponentSoon.stop();
 	}
 
 	/** Refresh only the opponent section — the highest-frequency path during fights. */
@@ -439,6 +478,29 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JPanel wornGrid = newGrid();
 		private final JButton clearBtn = button("Clear", plugin::clearOpponent);
 		private int[] lastWornIds = {};
+		// Past Fights: the global list (button-toggled, shown only while nobody is focused) and
+		// the per-player list under the notes. Entries rebuild only when the history or the
+		// focus changes; the "x ago" labels update in place off the panel's 30-second timer.
+		private final JButton pastFightsBtn = button("Past fights", this::toggleGlobalFights);
+		private final JPanel globalList = new JPanel();
+		private final JScrollPane globalScroll = makeHistoryScroll(globalList);
+		private boolean globalOpen;
+		private int builtGlobalRev = -1;
+		private final JLabel perCaption =
+			captionLabel("Every recorded fight against this player, newest first.");
+		private final JPanel perList = new JPanel();
+		private final JScrollPane perScroll = makeHistoryScroll(perList);
+		private String builtPerFor;
+		private int builtPerRev = -1;
+		private boolean perHasFights;
+		private final List<Runnable> globalRelUpdaters = new ArrayList<>();
+		private final List<Runnable> perRelUpdaters = new ArrayList<>();
+		// Lookup autocomplete: known names in a non-focusable popup under the field. Arrows move
+		// the highlight, Enter completes WITHOUT submitting, Escape closes, a click completes.
+		private final JPopupMenu suggestPopup = new JPopupMenu();
+		private final List<String> suggestions = new ArrayList<>();
+		private int suggestSel = -1;
+		private boolean applyingSuggestion;
 
 		OpponentSection()
 		{
@@ -494,6 +556,79 @@ class PvpProfitTrackerPanel extends PluginPanel
 			lookupRow.add(lookupCaption, BorderLayout.WEST);
 			lookupRow.add(lookupField, BorderLayout.CENTER);
 			add(lookupRow);
+
+			suggestPopup.setFocusable(false);
+			lookupField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener()
+			{
+				@Override
+				public void insertUpdate(javax.swing.event.DocumentEvent e)
+				{
+					refreshSuggestions();
+				}
+
+				@Override
+				public void removeUpdate(javax.swing.event.DocumentEvent e)
+				{
+					refreshSuggestions();
+				}
+
+				@Override
+				public void changedUpdate(javax.swing.event.DocumentEvent e)
+				{
+					refreshSuggestions();
+				}
+			});
+			lookupField.addKeyListener(new KeyAdapter()
+			{
+				@Override
+				public void keyPressed(KeyEvent e)
+				{
+					if (!suggestPopup.isVisible() || suggestions.isEmpty())
+					{
+						return;
+					}
+					final int n = suggestions.size();
+					switch (e.getKeyCode())
+					{
+						case KeyEvent.VK_DOWN:
+							suggestSel = (suggestSel + 1) % n;
+							highlightSuggestion();
+							e.consume();
+							break;
+						case KeyEvent.VK_UP:
+							suggestSel = (suggestSel <= 0 ? n : suggestSel) - 1;
+							highlightSuggestion();
+							e.consume();
+							break;
+						case KeyEvent.VK_ENTER:
+							// Complete only — a consumed Enter never reaches the submit action.
+							if (suggestSel >= 0)
+							{
+								applySuggestion(suggestions.get(suggestSel));
+								e.consume();
+							}
+							break;
+						case KeyEvent.VK_ESCAPE:
+							hideSuggestions();
+							e.consume();
+							break;
+						default:
+					}
+				}
+			});
+			lookupField.addFocusListener(new FocusAdapter()
+			{
+				@Override
+				public void focusLost(FocusEvent e)
+				{
+					hideSuggestions();
+				}
+			});
+
+			pastFightsBtn.setToolTipText(
+				"Every recorded fight, newest first — click a name for your full history with them.");
+			add(pastFightsBtn);
+			add(globalScroll);
 
 			// The stats pack tightly in their own column so the gear grid's row heights can't
 			// stretch them apart: attack..magic down the left, hitpoints top-right, gear inside.
@@ -604,6 +739,12 @@ class PvpProfitTrackerPanel extends PluginPanel
 			});
 			add(notesArea);
 
+			perCaption.setText("Past fights");
+			perCaption.setAlignmentX(Component.LEFT_ALIGNMENT);
+			perCaption.setBorder(new EmptyBorder(6, 0, 2, 0));
+			add(perCaption);
+			add(perScroll);
+
 			add(clearBtn);
 			refresh();
 		}
@@ -713,10 +854,22 @@ class PvpProfitTrackerPanel extends PluginPanel
 				gearHint.setVisible(false);
 				populateGrid(new int[0], null, null);
 				lastWornIds = new int[]{};
+				perCaption.setVisible(false);
+				perScroll.setVisible(false);
+				builtPerFor = null;
+				pastFightsBtn.setVisible(true);
+				if (globalOpen)
+				{
+					rebuildGlobalIfNeeded();
+				}
+				globalScroll.setVisible(globalOpen);
 				revalidate();
 				repaint();
 				return;
 			}
+			pastFightsBtn.setVisible(false);
+			globalScroll.setVisible(false);
+			rebuildPerIfNeeded(opp.name);
 
 			nameValue.setText(opp.name + (opp.visible ? "" : " (out of sight)"));
 			nameValue.setForeground(opp.bhTarget ? TARGET_GREEN : VALUE_COLOR);
@@ -770,30 +923,327 @@ class PvpProfitTrackerPanel extends PluginPanel
 			return level > 0 ? Integer.toString(level) : "—";
 		}
 
-		/**
-		 * Exact combat level (the game floors it for display): 0.25 × (def + hp
-		 * + ⌊prayer/2⌋) plus the best of melee 0.325 × (att + str), ranged
-		 * 0.325 × ⌊3·ranged/2⌋, magic 0.325 × ⌊3·magic/2⌋. Needs all seven
-		 * hiscore stats; -1 until the lookup answers.
-		 */
+		/** Exact combat level from the seven hiscore stats; -1 until the lookup answers. */
 		private double combatLevel(OpponentTracker.Snapshot o)
 		{
-			if (o.attack <= 0 || o.strength <= 0 || o.defence <= 0 || o.ranged <= 0
-				|| o.magic <= 0 || o.hitpoints <= 0 || o.prayer <= 0)
-			{
-				return -1;
-			}
-			final double base = 0.25 * (o.defence + o.hitpoints + o.prayer / 2);
-			final double melee = 0.325 * (o.attack + o.strength);
-			final double ranged = 0.325 * (o.ranged + o.ranged / 2);
-			final double magic = 0.325 * (o.magic + o.magic / 2);
-			return base + Math.max(melee, Math.max(ranged, magic));
+			return FightHistory.combatLevel(o.attack, o.strength, o.defence, o.ranged, o.magic,
+				o.hitpoints, o.prayer);
 		}
 
 		/** A hiscore activity score for display: dash when unranked. */
 		private String kc(int score)
 		{
 			return score >= 0 ? Integer.toString(score) : "—";
+		}
+
+		// ---- Past Fights lists ----
+
+		private void toggleGlobalFights()
+		{
+			globalOpen = !globalOpen;
+			pastFightsBtn.setText(globalOpen ? "Hide past fights" : "Past fights");
+			builtGlobalRev = -1; // rebuild fresh on every open so the times start current
+			refresh();
+		}
+
+		/** Base styling shared by both fight lists; the height is set per rebuild. */
+		private JScrollPane makeHistoryScroll(JPanel list)
+		{
+			list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+			list.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			final JScrollPane sp = new JScrollPane(list,
+				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+			sp.setBorder(new EmptyBorder(4, 0, 4, 0));
+			sp.setOpaque(false);
+			sp.getViewport().setOpaque(false);
+			sp.setAlignmentX(Component.LEFT_ALIGNMENT);
+			sp.getVerticalScrollBar().setUnitIncrement(16);
+			sp.setVisible(false);
+			return sp;
+		}
+
+		/** Shrink the scroll area to its content, up to the cap — no dead space under two fights. */
+		private void sizeScroll(JScrollPane sp, JPanel list, int maxHeight)
+		{
+			final int h = Math.min(maxHeight, list.getPreferredSize().height + 10);
+			sp.setPreferredSize(new Dimension(0, h));
+			sp.setMaximumSize(new Dimension(Integer.MAX_VALUE, h));
+		}
+
+		private void rebuildGlobalIfNeeded()
+		{
+			final int rev = plugin.fightRev();
+			if (rev == builtGlobalRev)
+			{
+				return;
+			}
+			builtGlobalRev = rev;
+			globalRelUpdaters.clear();
+			globalList.removeAll();
+			final List<FightHistory.Fight> fights = plugin.fightHistory();
+			if (fights.isEmpty())
+			{
+				final JLabel none = noteLabel();
+				none.setText("No fights recorded yet.");
+				none.setBorder(new EmptyBorder(2, 2, 2, 2));
+				globalList.add(none);
+			}
+			for (final FightHistory.Fight f : fights)
+			{
+				globalList.add(globalEntry(f));
+				globalList.add(vGap(4));
+			}
+			sizeScroll(globalScroll, globalList, 340);
+			globalList.revalidate();
+			globalList.repaint();
+		}
+
+		private void rebuildPerIfNeeded(String name)
+		{
+			final int rev = plugin.fightRev();
+			if (!name.equals(builtPerFor) || rev != builtPerRev)
+			{
+				builtPerFor = name;
+				builtPerRev = rev;
+				perRelUpdaters.clear();
+				perList.removeAll();
+				final List<FightHistory.Fight> fights = plugin.fightsWith(name);
+				perHasFights = !fights.isEmpty();
+				perCaption.setText("Past fights with " + name);
+				for (final FightHistory.Fight f : fights)
+				{
+					perList.add(perEntry(f));
+					perList.add(vGap(4));
+				}
+				if (perHasFights)
+				{
+					sizeScroll(perScroll, perList, 240);
+				}
+				perList.revalidate();
+				perList.repaint();
+			}
+			perCaption.setVisible(perHasFights);
+			perScroll.setVisible(perHasFights);
+		}
+
+		/** One global-history entry: who, outcome, when — the name links to their full history. */
+		private JPanel globalEntry(final FightHistory.Fight f)
+		{
+			final JPanel p = entryPanel();
+			final JLabel name = new JLabel(f.name);
+			name.setForeground(VALUE_COLOR);
+			name.setFont(name.getFont().deriveFont(Font.BOLD));
+			name.setIconTextGap(4);
+			fightIcon(name, f);
+			name.setCursor(new Cursor(Cursor.HAND_CURSOR));
+			name.setToolTipText("Show your full fight history with " + f.name);
+			name.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					plugin.lookupOpponent(f.name);
+				}
+			});
+			final JLabel outcome = new JLabel(f.win ? "WIN" : "LOSS");
+			outcome.setForeground(f.win ? TARGET_GREEN : LOSS_RED);
+			outcome.setFont(outcome.getFont().deriveFont(Font.BOLD));
+			p.add(lineRow(name, outcome));
+			final JLabel cmb = smallLabel("Cmb " + (f.cmb > 0 ? Integer.toString(f.cmb) : "—"));
+			final int[] wl = plugin.opponentRecord(f.name);
+			final JLabel record = smallLabel("W/L " + wl[0] + " – " + wl[1]);
+			record.setToolTipText("Your overall record against " + f.name);
+			record.setForeground(wl[0] > wl[1] ? TARGET_GREEN
+				: wl[1] > wl[0] ? LOSS_RED : ColorScheme.LIGHT_GRAY_COLOR);
+			p.add(lineRow(cmb, record));
+			addTimestampLines(p, f, globalRelUpdaters);
+			capHeight(p);
+			return p;
+		}
+
+		/** One per-player entry: outcome plus when — the name is already the section title. */
+		private JPanel perEntry(final FightHistory.Fight f)
+		{
+			final JPanel p = entryPanel();
+			final JLabel outcome = new JLabel(f.win ? "WIN" : "LOSS");
+			outcome.setForeground(f.win ? TARGET_GREEN : LOSS_RED);
+			outcome.setFont(outcome.getFont().deriveFont(Font.BOLD));
+			outcome.setIconTextGap(4);
+			fightIcon(outcome, f);
+			p.add(lineRow(outcome, null));
+			addTimestampLines(p, f, perRelUpdaters);
+			capHeight(p);
+			return p;
+		}
+
+		private JPanel entryPanel()
+		{
+			final JPanel p = new JPanel();
+			p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+			p.setBackground(ColorScheme.DARK_GRAY_COLOR);
+			p.setBorder(new EmptyBorder(4, 5, 4, 5));
+			p.setAlignmentX(Component.LEFT_ALIGNMENT);
+			return p;
+		}
+
+		/** The exact end time, then a live "x ago" line registered on the given updater list. */
+		private void addTimestampLines(JPanel p, FightHistory.Fight f, List<Runnable> updaters)
+		{
+			final JLabel when = smallLabel(FightHistory.exact(f.ts));
+			when.setToolTipText(FightHistory.exact(f.ts));
+			p.add(lineRow(when, null));
+			final JLabel rel = smallLabel("");
+			final Runnable update = () ->
+				rel.setText(FightHistory.relative(System.currentTimeMillis(), f.ts));
+			update.run();
+			updaters.add(update);
+			p.add(lineRow(rel, null));
+		}
+
+		/** Marks the fight type: green skull = your BH target, red skull = a BH-world rogue. */
+		private void fightIcon(JLabel label, FightHistory.Fight f)
+		{
+			if (f.target)
+			{
+				plugin.spriteIcon(label,
+					net.runelite.client.hiscore.HiscoreSkill.BOUNTY_HUNTER_HUNTER.getSpriteId(), 12);
+				label.setToolTipText("They were your Bounty Hunter target");
+			}
+			else if (f.bh)
+			{
+				plugin.spriteIcon(label,
+					net.runelite.client.hiscore.HiscoreSkill.BOUNTY_HUNTER_ROGUE.getSpriteId(), 12);
+				label.setToolTipText("Bounty Hunter world — not your assigned target");
+			}
+		}
+
+		private void capHeight(JPanel p)
+		{
+			p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
+		}
+
+		private JPanel lineRow(Component left, Component right)
+		{
+			final JPanel r = new JPanel(new BorderLayout());
+			r.setOpaque(false);
+			r.setAlignmentX(Component.LEFT_ALIGNMENT);
+			r.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+			r.add(left, BorderLayout.WEST);
+			if (right != null)
+			{
+				r.add(right, BorderLayout.EAST);
+			}
+			return r;
+		}
+
+		private JLabel smallLabel(String text)
+		{
+			final JLabel l = new JLabel(text);
+			l.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			l.setFont(l.getFont().deriveFont(l.getFont().getSize2D() - 2f));
+			return l;
+		}
+
+		private Component vGap(int height)
+		{
+			final JPanel gap = new JPanel();
+			gap.setOpaque(false);
+			gap.setPreferredSize(new Dimension(0, height));
+			gap.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+			return gap;
+		}
+
+		/** Re-render every visible "x ago" label in place — no rebuild, no jitter. */
+		void updateRelativeTimes()
+		{
+			if (globalScroll.isVisible())
+			{
+				for (final Runnable r : globalRelUpdaters)
+				{
+					r.run();
+				}
+			}
+			if (perScroll.isVisible())
+			{
+				for (final Runnable r : perRelUpdaters)
+				{
+					r.run();
+				}
+			}
+		}
+
+		// ---- lookup autocomplete ----
+
+		private void refreshSuggestions()
+		{
+			if (applyingSuggestion)
+			{
+				return;
+			}
+			final String q = lookupField.getText().trim();
+			suggestions.clear();
+			suggestSel = -1;
+			if (!q.isEmpty())
+			{
+				final String lq = q.toLowerCase();
+				final List<String> known = plugin.knownNames();
+				for (final String n : known) // prefix matches rank first
+				{
+					if (suggestions.size() < 8 && n.toLowerCase().startsWith(lq)
+						&& !n.equalsIgnoreCase(q))
+					{
+						suggestions.add(n);
+					}
+				}
+				for (final String n : known)
+				{
+					if (suggestions.size() < 8 && !n.toLowerCase().startsWith(lq)
+						&& n.toLowerCase().contains(lq) && !n.equalsIgnoreCase(q))
+					{
+						suggestions.add(n);
+					}
+				}
+			}
+			suggestPopup.setVisible(false);
+			suggestPopup.removeAll();
+			if (suggestions.isEmpty())
+			{
+				return;
+			}
+			for (final String s : suggestions)
+			{
+				final JMenuItem item = new JMenuItem(s);
+				item.addActionListener(ev -> applySuggestion(s));
+				suggestPopup.add(item);
+			}
+			suggestPopup.show(lookupField, 0, lookupField.getHeight());
+		}
+
+		private void highlightSuggestion()
+		{
+			if (suggestSel < 0 || suggestSel >= suggestPopup.getComponentCount())
+			{
+				return;
+			}
+			MenuSelectionManager.defaultManager().setSelectedPath(new MenuElement[]{
+				suggestPopup, (JMenuItem) suggestPopup.getComponent(suggestSel)});
+		}
+
+		/** Fill the field with the picked name — completing never submits the lookup. */
+		private void applySuggestion(String name)
+		{
+			applyingSuggestion = true;
+			lookupField.setText(name);
+			applyingSuggestion = false;
+			hideSuggestions();
+			lookupField.requestFocusInWindow();
+		}
+
+		private void hideSuggestions()
+		{
+			suggestSel = -1;
+			suggestions.clear();
+			suggestPopup.setVisible(false);
 		}
 
 		private void populateGrid(int[] ids, String[] names, long[] prices)
