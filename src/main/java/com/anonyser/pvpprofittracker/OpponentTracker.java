@@ -15,11 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Tracks one focused player — chosen with the right-click "Inspect" option or a Bounty Hunter
- * target assignment — and shows their currently worn equipment with GE prices, the same
- * information Equipment Inspector has displayed for years. Nothing more: per the Plugin Hub
- * review of the 1.1.0 submission, no risk estimation, no drop/smite math, no stat lookups and
- * no previously-seen item pool. Current visible gear only.
+ * Tracks one focused player — chosen with the right-click "Inspect" option, a Bounty Hunter
+ * target assignment, or the panel's name lookup — and shows their currently worn equipment with
+ * GE prices, the same information Equipment Inspector has displayed for years. Nothing more: per
+ * the Plugin Hub review of the 1.1.0 submission, no risk estimation, no drop/smite math and no
+ * previously-seen item pool. Current visible gear only, and only once the player actually renders.
  */
 class OpponentTracker
 {
@@ -45,8 +45,8 @@ class OpponentTracker
 	private HiscoreResult hiscore;
 	private int lastSeenTick;
 	private boolean visible;
-	// Gear shows only after a deliberate right-click Inspect, mirroring Equipment Inspector's
-	// manual flow. A Bounty Hunter target assignment pulls the hiscores alone.
+	// Gear shows after a deliberate right-click Inspect or a panel name lookup; both read only the
+	// player's rendered equipment. A Bounty Hunter target assignment pulls the hiscores alone.
 	private boolean gearEnabled;
 	// True when this focus came from a Bounty Hunter target assignment (the panel shows the name
 	// in green). Inspecting the same player keeps it; focusing someone else resets it.
@@ -100,7 +100,7 @@ class OpponentTracker
 	void focusName(String targetName)
 	{
 		final String jagex = Text.toJagexName(targetName);
-		if (jagex.equals(name))
+		if (jagex.equalsIgnoreCase(name))
 		{
 			return;
 		}
@@ -113,20 +113,22 @@ class OpponentTracker
 	}
 
 	/**
-	 * Panel hiscore lookup by typed name: pull the hiscores, stats only — no gear view and no
-	 * target colouring. Focusing the name also surfaces any saved notes and W/L record for it.
+	 * Panel hiscore lookup by typed name: pull the hiscores and surface any saved notes and W/L
+	 * record for it — no target colouring. The gear view arms like an inspect: it fills in as soon
+	 * as the player actually renders nearby (same visible-equipment data, nothing sooner).
 	 */
 	void lookupName(String typedName)
 	{
 		final String jagex = Text.toJagexName(typedName.trim());
-		if (jagex.isEmpty() || jagex.equals(name))
+		if (jagex.isEmpty() || jagex.equalsIgnoreCase(name))
 		{
 			return;
 		}
 		clear();
 		name = jagex;
+		gearEnabled = true;
 		lastSeenTick = client.getTickCount();
-		log.debug("panel lookup, stats only: {}", jagex);
+		log.debug("panel lookup: {}", jagex);
 		recompute();
 	}
 
@@ -148,13 +150,22 @@ class OpponentTracker
 
 	boolean isFocused(Player p)
 	{
+		// Case-insensitive: a panel lookup is typed by hand ("50e" for "50E"), and Jagex names are
+		// unique ignoring case. The first sighting adopts the real rendered casing (see refresh).
 		final String pName = sanitizedName(p);
-		return name != null && name.equals(pName);
+		return name != null && name.equalsIgnoreCase(pName);
 	}
 
 	/** Re-read the focused player's currently worn gear. Client thread only. */
 	void refresh(Player p)
 	{
+		// Adopt the player's real rendered name: a hand-typed lookup can differ in case, and the
+		// W/L death check and panel display both compare/show the exact string.
+		final String canonical = sanitizedName(p);
+		if (canonical != null && !canonical.equals(name))
+		{
+			name = canonical;
+		}
 		final PlayerComposition comp = p.getPlayerComposition();
 		if (gearEnabled && comp != null)
 		{
@@ -276,7 +287,7 @@ class OpponentTracker
 			hiscoreLevel(HiscoreSkill.PRAYER), hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_HUNTER),
 			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
 			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT),
-			hiscoreLevel(HiscoreSkill.VARDORVIS));
+			hiscoreLevel(HiscoreSkill.VARDORVIS), hiscoreLevel(HiscoreSkill.TZTOK_JAD));
 
 		final int changeHash = java.util.Objects.hash(name, visible, gearEnabled, bhTarget,
 			java.util.Arrays.hashCode(ids), hiscore != null);
@@ -312,11 +323,13 @@ class OpponentTracker
 		final int zukKc;
 		final int solHereditKc;
 		final int vardorvisKc;
+		final int jadKc;
 
 		Snapshot(String name, boolean visible, boolean gearShown, boolean bhTarget, int[] equippedIds,
 			String[] equippedNames, long[] equippedGe, int attack, int strength,
 			int defence, int ranged, int magic, int hitpoints, int prayer, int bhTargetKills,
-			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc, int vardorvisKc)
+			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc, int vardorvisKc,
+			int jadKc)
 		{
 			this.name = name;
 			this.visible = visible;
@@ -338,6 +351,7 @@ class OpponentTracker
 			this.zukKc = zukKc;
 			this.solHereditKc = solHereditKc;
 			this.vardorvisKc = vardorvisKc;
+			this.jadKc = jadKc;
 		}
 	}
 }

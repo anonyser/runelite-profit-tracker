@@ -420,6 +420,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel zukCell = kcCell("TzKal-Zuk (Inferno) kill count.");
 		private final JLabel solCell = kcCell("Sol Heredit (Colosseum) kill count.");
 		private final JLabel vardorvisCell = kcCell("Vardorvis kill count.");
+		private final JLabel jadCell = kcCell("TzTok-Jad (Fight Caves) kill count.");
 		// Type any name to pull that player's hiscores (and your notes on them) on demand.
 		private final javax.swing.JTextField lookupField = new javax.swing.JTextField();
 		// Exact (unfloored) combat level from their hiscore stats.
@@ -486,7 +487,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 			final JPanel lookupRow = new JPanel(new BorderLayout(6, 0));
 			lookupRow.setOpaque(false);
 			lookupRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-			lookupRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+			// Breathing room above and below so the field never crowds the name header or the
+			// stats block under it.
+			lookupRow.setBorder(new EmptyBorder(6, 0, 10, 0));
+			lookupRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
 			lookupRow.add(lookupCaption, BorderLayout.WEST);
 			lookupRow.add(lookupField, BorderLayout.CENTER);
 			add(lookupRow);
@@ -505,6 +509,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 			}
 			statsGear.setOpaque(false);
 			statsGear.setAlignmentX(Component.LEFT_ALIGNMENT);
+			// Same border as the six left cells, or hitpoints sits 2px higher than attack.
+			hitpointsCell.setBorder(new EmptyBorder(2, 0, 2, 0));
 			final GridBagConstraints c = new GridBagConstraints();
 			c.anchor = GridBagConstraints.NORTHWEST;
 			c.gridx = 0;
@@ -520,9 +526,10 @@ class PvpProfitTrackerPanel extends PluginPanel
 			statsGear.add(wornGrid, c);
 			add(statsGear);
 
-			buildCenteredRow(kcRow, bhHunterCell, bhRogueCell);
+			buildCenteredRow(kcRow, 14, bhHunterCell, bhRogueCell);
 			add(kcRow);
-			buildCenteredRow(bossRow, zukCell, solCell, vardorvisCell);
+			// Four boss counts on one row: smaller icons + tighter gaps so wide KCs still fit.
+			buildCenteredRow(bossRow, 8, jadCell, zukCell, solCell, vardorvisCell);
 			add(bossRow);
 
 			combatRow = rowWith(captionLabel(
@@ -542,12 +549,14 @@ class PvpProfitTrackerPanel extends PluginPanel
 				net.runelite.client.hiscore.HiscoreSkill.BOUNTY_HUNTER_HUNTER.getSpriteId());
 			plugin.spriteIcon(bhRogueCell,
 				net.runelite.client.hiscore.HiscoreSkill.BOUNTY_HUNTER_ROGUE.getSpriteId());
+			plugin.spriteIcon(jadCell,
+				net.runelite.client.hiscore.HiscoreSkill.TZTOK_JAD.getSpriteId(), 16);
 			plugin.spriteIcon(zukCell,
-				net.runelite.client.hiscore.HiscoreSkill.TZKAL_ZUK.getSpriteId());
+				net.runelite.client.hiscore.HiscoreSkill.TZKAL_ZUK.getSpriteId(), 16);
 			plugin.spriteIcon(solCell,
-				net.runelite.client.hiscore.HiscoreSkill.SOL_HEREDIT.getSpriteId());
+				net.runelite.client.hiscore.HiscoreSkill.SOL_HEREDIT.getSpriteId(), 16);
 			plugin.spriteIcon(vardorvisCell,
-				net.runelite.client.hiscore.HiscoreSkill.VARDORVIS.getSpriteId());
+				net.runelite.client.hiscore.HiscoreSkill.VARDORVIS.getSpriteId(), 16);
 
 			gearHint.setText("<html>Right-click them and choose <b>Inspect</b> to view gear.</html>");
 			add(gearHint);
@@ -646,17 +655,17 @@ class PvpProfitTrackerPanel extends PluginPanel
 			return l;
 		}
 
-		private Component horizontalGap()
+		private Component horizontalGap(int width)
 		{
 			final JPanel gap = new JPanel();
 			gap.setOpaque(false);
-			gap.setPreferredSize(new Dimension(14, 1));
-			gap.setMaximumSize(new Dimension(14, 26));
+			gap.setPreferredSize(new Dimension(width, 1));
+			gap.setMaximumSize(new Dimension(width, 26));
 			return gap;
 		}
 
-		/** Lays the cells out horizontally, centered by glue on both sides. */
-		private void buildCenteredRow(JPanel row, Component... cells)
+		/** Lays the cells out horizontally with the given gap, centered by glue on both sides. */
+		private void buildCenteredRow(JPanel row, int gap, Component... cells)
 		{
 			row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
 			row.setOpaque(false);
@@ -667,7 +676,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			{
 				if (i > 0)
 				{
-					row.add(horizontalGap());
+					row.add(horizontalGap(gap));
 				}
 				row.add(cells[i]);
 			}
@@ -724,6 +733,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			zukCell.setText(kc(opp.zukKc));
 			solCell.setText(kc(opp.solHereditKc));
 			vardorvisCell.setText(kc(opp.vardorvisKc));
+			jadCell.setText(kc(opp.jadKc));
 			kcRow.setVisible(true);
 			bossRow.setVisible(true);
 			final double combat = combatLevel(opp);

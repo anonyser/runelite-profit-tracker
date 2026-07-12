@@ -1491,6 +1491,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 		spriteManager.addSpriteTo(label, spriteId, 0);
 	}
 
+	/** Async-loads a game sprite onto a label scaled to the given height (aspect kept). */
+	void spriteIcon(javax.swing.JLabel label, int spriteId, int height)
+	{
+		spriteManager.getSpriteAsync(spriteId, 0, img ->
+		{
+			final int w = Math.max(1, img.getWidth() * height / Math.max(1, img.getHeight()));
+			final java.awt.Image scaled =
+				img.getScaledInstance(w, height, java.awt.Image.SCALE_SMOOTH);
+			SwingUtilities.invokeLater(() -> label.setIcon(new javax.swing.ImageIcon(scaled)));
+		});
+	}
+
 	// ---- per-opponent notes: keyed by sanitized player name, kept in config so
 	// they survive restarts and come back the next time you face that player ----
 
