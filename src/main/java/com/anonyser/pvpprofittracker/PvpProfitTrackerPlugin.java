@@ -1713,6 +1713,21 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 	}
 
+	/** Drop a name from the autocomplete registry — the ✕ on a suggestion. Safe from the EDT. */
+	void forgetName(String playerName)
+	{
+		if (playerName == null)
+		{
+			return;
+		}
+		synchronized (knownNames)
+		{
+			knownNames.removeIf(n -> n.equalsIgnoreCase(playerName));
+			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_KNOWN_NAMES,
+				gson.toJson(knownNames));
+		}
+	}
+
 	/** Move (or add) a display name to the front of the autocomplete registry. */
 	void rememberName(String playerName)
 	{

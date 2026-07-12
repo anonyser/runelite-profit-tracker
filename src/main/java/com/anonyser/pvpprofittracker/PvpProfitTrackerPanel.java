@@ -22,12 +22,8 @@ import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JScrollPane;
-import javax.swing.MenuElement;
-import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
@@ -481,15 +477,15 @@ class PvpProfitTrackerPanel extends PluginPanel
 		// Past Fights: the global list (button-toggled, shown only while nobody is focused) and
 		// the per-player list under the notes. Entries rebuild only when the history or the
 		// focus changes; the "x ago" labels update in place off the panel's 30-second timer.
+		// The global view renders at most this many — the sidebar scrolls, but 500 would be silly.
+		private static final int MAX_GLOBAL_SHOWN = 100;
 		private final JButton pastFightsBtn = button("Past fights", this::toggleGlobalFights);
-		private final JPanel globalList = new JPanel();
-		private final JScrollPane globalScroll = makeHistoryScroll(globalList);
+		private final JPanel globalList = makeHistoryList();
 		private boolean globalOpen;
 		private int builtGlobalRev = -1;
 		private final JLabel perCaption =
 			captionLabel("Every recorded fight against this player, newest first.");
-		private final JPanel perList = new JPanel();
-		private final JScrollPane perScroll = makeHistoryScroll(perList);
+		private final JPanel perList = makeHistoryList();
 		private String builtPerFor;
 		private int builtPerRev = -1;
 		private boolean perHasFights;
@@ -628,7 +624,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			pastFightsBtn.setToolTipText(
 				"Every recorded fight, newest first — click a name for your full history with them.");
 			add(pastFightsBtn);
-			add(globalScroll);
+			add(globalList);
 
 			// The stats pack tightly in their own column so the gear grid's row heights can't
 			// stretch them apart: attack..magic down the left, hitpoints top-right, gear inside.
@@ -743,7 +739,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			perCaption.setAlignmentX(Component.LEFT_ALIGNMENT);
 			perCaption.setBorder(new EmptyBorder(6, 0, 2, 0));
 			add(perCaption);
-			add(perScroll);
+			add(perList);
 
 			add(clearBtn);
 			refresh();
@@ -855,20 +851,20 @@ class PvpProfitTrackerPanel extends PluginPanel
 				populateGrid(new int[0], null, null);
 				lastWornIds = new int[]{};
 				perCaption.setVisible(false);
-				perScroll.setVisible(false);
+				perList.setVisible(false);
 				builtPerFor = null;
 				pastFightsBtn.setVisible(true);
 				if (globalOpen)
 				{
 					rebuildGlobalIfNeeded();
 				}
-				globalScroll.setVisible(globalOpen);
+				globalList.setVisible(globalOpen);
 				revalidate();
 				repaint();
 				return;
 			}
 			pastFightsBtn.setVisible(false);
-			globalScroll.setVisible(false);
+			globalList.setVisible(false);
 			rebuildPerIfNeeded(opp.name);
 
 			nameValue.setText(opp.name + (opp.visible ? "" : " (out of sight)"));
@@ -946,28 +942,19 @@ class PvpProfitTrackerPanel extends PluginPanel
 			refresh();
 		}
 
-		/** Base styling shared by both fight lists; the height is set per rebuild. */
-		private JScrollPane makeHistoryScroll(JPanel list)
+		/**
+		 * A fight list sits directly in the panel flow, so the sidebar's own scrollbar handles
+		 * however long it gets — no nested scroll box to fight with the wheel.
+		 */
+		private JPanel makeHistoryList()
 		{
+			final JPanel list = new JPanel();
 			list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-			list.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			final JScrollPane sp = new JScrollPane(list,
-				JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-			sp.setBorder(new EmptyBorder(4, 0, 4, 0));
-			sp.setOpaque(false);
-			sp.getViewport().setOpaque(false);
-			sp.setAlignmentX(Component.LEFT_ALIGNMENT);
-			sp.getVerticalScrollBar().setUnitIncrement(16);
-			sp.setVisible(false);
-			return sp;
-		}
-
-		/** Shrink the scroll area to its content, up to the cap — no dead space under two fights. */
-		private void sizeScroll(JScrollPane sp, JPanel list, int maxHeight)
-		{
-			final int h = Math.min(maxHeight, list.getPreferredSize().height + 10);
-			sp.setPreferredSize(new Dimension(0, h));
-			sp.setMaximumSize(new Dimension(Integer.MAX_VALUE, h));
+			list.setOpaque(false);
+			list.setAlignmentX(Component.LEFT_ALIGNMENT);
+			list.setBorder(new EmptyBorder(4, 0, 4, 0));
+			list.setVisible(false);
+			return list;
 		}
 
 		private void rebuildGlobalIfNeeded()
@@ -988,12 +975,18 @@ class PvpProfitTrackerPanel extends PluginPanel
 				none.setBorder(new EmptyBorder(2, 2, 2, 2));
 				globalList.add(none);
 			}
-			for (final FightHistory.Fight f : fights)
+			final int shown = Math.min(fights.size(), MAX_GLOBAL_SHOWN);
+			for (int i = 0; i < shown; i++)
 			{
-				globalList.add(globalEntry(f));
+				globalList.add(globalEntry(fights.get(i)));
 				globalList.add(vGap(4));
 			}
-			sizeScroll(globalScroll, globalList, 340);
+			if (fights.size() > shown)
+			{
+				final JLabel more = noteLabel();
+				more.setText("Showing the " + shown + " most recent of " + fights.size() + ".");
+				globalList.add(more);
+			}
 			globalList.revalidate();
 			globalList.repaint();
 		}
@@ -1015,15 +1008,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 					perList.add(perEntry(f));
 					perList.add(vGap(4));
 				}
-				if (perHasFights)
-				{
-					sizeScroll(perScroll, perList, 240);
-				}
 				perList.revalidate();
 				perList.repaint();
 			}
 			perCaption.setVisible(perHasFights);
-			perScroll.setVisible(perHasFights);
+			perList.setVisible(perHasFights);
 		}
 
 		/** One global-history entry: who, outcome, when — the name links to their full history. */
@@ -1156,14 +1145,14 @@ class PvpProfitTrackerPanel extends PluginPanel
 		/** Re-render every visible "x ago" label in place — no rebuild, no jitter. */
 		void updateRelativeTimes()
 		{
-			if (globalScroll.isVisible())
+			if (globalList.isVisible())
 			{
 				for (final Runnable r : globalRelUpdaters)
 				{
 					r.run();
 				}
 			}
-			if (perScroll.isVisible())
+			if (perList.isVisible())
 			{
 				for (final Runnable r : perRelUpdaters)
 				{
@@ -1210,23 +1199,74 @@ class PvpProfitTrackerPanel extends PluginPanel
 			{
 				return;
 			}
-			for (final String s : suggestions)
+			for (int i = 0; i < suggestions.size(); i++)
 			{
-				final JMenuItem item = new JMenuItem(s);
-				item.addActionListener(ev -> applySuggestion(s));
-				suggestPopup.add(item);
+				suggestPopup.add(suggestionRow(suggestions.get(i), i));
 			}
 			suggestPopup.show(lookupField, 0, lookupField.getHeight());
 		}
 
+		/**
+		 * One suggestion: the name (click or Enter to complete) with a ✕ on the right that
+		 * forgets the name — mistyped lookups get remembered, and this is how you evict them.
+		 */
+		private Component suggestionRow(final String name, final int index)
+		{
+			final JPanel row = new JPanel(new BorderLayout(6, 0));
+			row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			row.setBorder(new EmptyBorder(3, 6, 3, 6));
+			final JLabel nameLabel = new JLabel(name);
+			nameLabel.setForeground(VALUE_COLOR);
+			final MouseAdapter pick = new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					applySuggestion(name);
+				}
+
+				@Override
+				public void mouseEntered(MouseEvent e)
+				{
+					suggestSel = index;
+					highlightSuggestion();
+				}
+			};
+			row.addMouseListener(pick);
+			nameLabel.addMouseListener(pick);
+			final JLabel forget = new JLabel("✕");
+			forget.setForeground(ColorScheme.LIGHT_GRAY_COLOR.darker());
+			forget.setToolTipText("Forget this name");
+			forget.setCursor(new Cursor(Cursor.HAND_CURSOR));
+			forget.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					plugin.forgetName(name);
+					refreshSuggestions(); // re-show the popup without it
+				}
+
+				@Override
+				public void mouseEntered(MouseEvent e)
+				{
+					suggestSel = index;
+					highlightSuggestion();
+				}
+			});
+			row.add(nameLabel, BorderLayout.CENTER);
+			row.add(forget, BorderLayout.EAST);
+			return row;
+		}
+
 		private void highlightSuggestion()
 		{
-			if (suggestSel < 0 || suggestSel >= suggestPopup.getComponentCount())
+			for (int i = 0; i < suggestPopup.getComponentCount(); i++)
 			{
-				return;
+				suggestPopup.getComponent(i).setBackground(i == suggestSel
+					? ColorScheme.DARK_GRAY_HOVER_COLOR : ColorScheme.DARKER_GRAY_COLOR);
 			}
-			MenuSelectionManager.defaultManager().setSelectedPath(new MenuElement[]{
-				suggestPopup, (JMenuItem) suggestPopup.getComponent(suggestSel)});
+			suggestPopup.repaint();
 		}
 
 		/** Fill the field with the picked name — completing never submits the lookup. */
