@@ -112,6 +112,24 @@ class OpponentTracker
 		recompute();
 	}
 
+	/**
+	 * Panel hiscore lookup by typed name: pull the hiscores, stats only — no gear view and no
+	 * target colouring. Focusing the name also surfaces any saved notes and W/L record for it.
+	 */
+	void lookupName(String typedName)
+	{
+		final String jagex = Text.toJagexName(typedName.trim());
+		if (jagex.isEmpty() || jagex.equals(name))
+		{
+			return;
+		}
+		clear();
+		name = jagex;
+		lastSeenTick = client.getTickCount();
+		log.debug("panel lookup, stats only: {}", jagex);
+		recompute();
+	}
+
 	void clear()
 	{
 		name = null;
@@ -257,7 +275,8 @@ class OpponentTracker
 			hiscoreLevel(HiscoreSkill.MAGIC), hiscoreLevel(HiscoreSkill.HITPOINTS),
 			hiscoreLevel(HiscoreSkill.PRAYER), hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_HUNTER),
 			hiscoreLevel(HiscoreSkill.BOUNTY_HUNTER_ROGUE), hiscoreLevel(HiscoreSkill.COLOSSEUM_GLORY),
-			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT));
+			hiscoreLevel(HiscoreSkill.TZKAL_ZUK), hiscoreLevel(HiscoreSkill.SOL_HEREDIT),
+			hiscoreLevel(HiscoreSkill.VARDORVIS));
 
 		final int changeHash = java.util.Objects.hash(name, visible, gearEnabled, bhTarget,
 			java.util.Arrays.hashCode(ids), hiscore != null);
@@ -292,11 +311,12 @@ class OpponentTracker
 		final int colosseumGlory;
 		final int zukKc;
 		final int solHereditKc;
+		final int vardorvisKc;
 
 		Snapshot(String name, boolean visible, boolean gearShown, boolean bhTarget, int[] equippedIds,
 			String[] equippedNames, long[] equippedGe, int attack, int strength,
 			int defence, int ranged, int magic, int hitpoints, int prayer, int bhTargetKills,
-			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc)
+			int bhRogueKills, int colosseumGlory, int zukKc, int solHereditKc, int vardorvisKc)
 		{
 			this.name = name;
 			this.visible = visible;
@@ -317,6 +337,7 @@ class OpponentTracker
 			this.colosseumGlory = colosseumGlory;
 			this.zukKc = zukKc;
 			this.solHereditKc = solHereditKc;
+			this.vardorvisKc = vardorvisKc;
 		}
 	}
 }

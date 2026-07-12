@@ -419,6 +419,9 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private final JLabel bhRogueCell = kcCell("Bounty Hunter kills as the rogue.");
 		private final JLabel zukCell = kcCell("TzKal-Zuk (Inferno) kill count.");
 		private final JLabel solCell = kcCell("Sol Heredit (Colosseum) kill count.");
+		private final JLabel vardorvisCell = kcCell("Vardorvis kill count.");
+		// Type any name to pull that player's hiscores (and your notes on them) on demand.
+		private final javax.swing.JTextField lookupField = new javax.swing.JTextField();
 		// Exact (unfloored) combat level from their hiscore stats.
 		private final JLabel combatValue = valueLabel();
 		private final JPanel combatRow;
@@ -461,6 +464,33 @@ class PvpProfitTrackerPanel extends PluginPanel
 				+ "Bounty Hunter target, to see their stats and gear here.</html>");
 			add(hint);
 
+			// Hiscore lookup by name: shows the same stats block plus any saved notes and the
+			// W/L record for that name, no sighting needed.
+			final JLabel lookupCaption = captionLabel(
+				"Look up any player by name — their hiscore stats, plus your saved notes and W/L for that name.");
+			lookupCaption.setText("Lookup");
+			lookupField.setToolTipText("Type a player name and press Enter");
+			lookupField.setBackground(ColorScheme.DARK_GRAY_COLOR);
+			lookupField.setForeground(Color.WHITE);
+			lookupField.setCaretColor(Color.WHITE);
+			lookupField.setBorder(new EmptyBorder(3, 4, 3, 4));
+			lookupField.addActionListener(e ->
+			{
+				final String q = lookupField.getText().trim();
+				if (!q.isEmpty())
+				{
+					plugin.lookupOpponent(q);
+					lookupField.setText("");
+				}
+			});
+			final JPanel lookupRow = new JPanel(new BorderLayout(6, 0));
+			lookupRow.setOpaque(false);
+			lookupRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+			lookupRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+			lookupRow.add(lookupCaption, BorderLayout.WEST);
+			lookupRow.add(lookupField, BorderLayout.CENTER);
+			add(lookupRow);
+
 			// The stats pack tightly in their own column so the gear grid's row heights can't
 			// stretch them apart: attack..magic down the left, hitpoints top-right, gear inside.
 			final JPanel statColumn = new JPanel();
@@ -492,7 +522,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 
 			buildCenteredRow(kcRow, bhHunterCell, bhRogueCell);
 			add(kcRow);
-			buildCenteredRow(bossRow, zukCell, solCell);
+			buildCenteredRow(bossRow, zukCell, solCell, vardorvisCell);
 			add(bossRow);
 
 			combatRow = rowWith(captionLabel(
@@ -516,6 +546,8 @@ class PvpProfitTrackerPanel extends PluginPanel
 				net.runelite.client.hiscore.HiscoreSkill.TZKAL_ZUK.getSpriteId());
 			plugin.spriteIcon(solCell,
 				net.runelite.client.hiscore.HiscoreSkill.SOL_HEREDIT.getSpriteId());
+			plugin.spriteIcon(vardorvisCell,
+				net.runelite.client.hiscore.HiscoreSkill.VARDORVIS.getSpriteId());
 
 			gearHint.setText("<html>Right-click them and choose <b>Inspect</b> to view gear.</html>");
 			add(gearHint);
@@ -691,6 +723,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			bhRogueCell.setText(kc(opp.bhRogueKills));
 			zukCell.setText(kc(opp.zukKc));
 			solCell.setText(kc(opp.solHereditKc));
+			vardorvisCell.setText(kc(opp.vardorvisKc));
 			kcRow.setVisible(true);
 			bossRow.setVisible(true);
 			final double combat = combatLevel(opp);

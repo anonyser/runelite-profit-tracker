@@ -1583,6 +1583,21 @@ public class PvpProfitTrackerPlugin extends Plugin
 		});
 	}
 
+	/**
+	 * Panel hiscore lookup: focus a typed name, stats only — no gear view, no target colouring.
+	 * Safe from any thread (the panel's lookup field runs on the EDT).
+	 */
+	void lookupOpponent(String name)
+	{
+		clientThread.invoke(() ->
+		{
+			if (opponentTracker != null)
+			{
+				opponentTracker.lookupName(name);
+			}
+		});
+	}
+
 	/** Whether the Protect Item prayer is active right now. Game-thread only (varbit read). */
 	boolean protectItemOn()
 	{
