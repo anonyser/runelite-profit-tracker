@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
@@ -48,8 +49,10 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.OverlayMenuClicked;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.game.chatbox.ChatboxPanelManager;
 import net.runelite.client.hiscore.HiscoreManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -213,6 +216,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 	@Inject
 	private net.runelite.client.chat.ChatMessageManager chatMessageManager;
 
+	@Inject
+	private ChatboxPanelManager chatboxPanelManager;
+
 	// Untradeable repair-on-death costs (item name -> cost), loaded from reclaim-costs.csv.
 	private final Map<String, Long> repairCosts = new HashMap<>();
 
@@ -220,6 +226,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private PvpProfitTrackerOverlay overlay;
 	private PvpProfitTrackerPanel panel;
 	private NavigationButton navButton;
+
+	// Double-death recovery: when you and the focused opponent die within a few ticks of each
+	// other, prompt to log what was looted back. One pending prompt at a time; the overlay renders
+	// off the name. lastWin/lastLoss track the most recent outcome per name so the pair can be
+	// spotted whichever death lands first.
+	private static final int DOUBLE_DEATH_WINDOW_TICKS = 8;
+	private DoubleDeathOverlay doubleDeathOverlay;
+	private volatile String pendingDoubleDeathName;
+	private String lastWinName;
+	private int lastWinTick = -1000;
+	private String lastLossName;
+	private int lastLossTick = -1000;
 
 	// Fight history + the known-name registry behind the lookup autocomplete (see
 	// K_FIGHT_HISTORY / K_KNOWN_NAMES). Each list is its own monitor: fights land on the
@@ -320,6 +338,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			sessionStart = Instant.now();
 			overlay = new PvpProfitTrackerOverlay(this, config);
 			overlayManager.add(overlay);
+			doubleDeathOverlay = new DoubleDeathOverlay(this, config);
+			overlayManager.add(doubleDeathOverlay);
 			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updateOpponentPanel);
 			combatCalc = new CombatCalc(client, itemManager);
 			panel = new PvpProfitTrackerPanel(this, config);
@@ -351,12 +371,15 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			save();
 			overlayManager.remove(overlay);
+			overlayManager.remove(doubleDeathOverlay);
 			clientToolbar.removeNavigation(navButton);
 			if (panel != null)
 			{
 				panel.shutdown(); // stop its Swing timers, or they'd hold the dead panel alive
 			}
 			overlay = null;
+			doubleDeathOverlay = null;
+			pendingDoubleDeathName = null;
 			opponentTracker = null;
 			combatCalc = null;
 			maxHitInfo = null;
@@ -1592,10 +1615,100 @@ public class PvpProfitTrackerPlugin extends Plugin
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName),
 			record[0] + "/" + record[1]);
 		recordFight(playerName, win);
+		checkDoubleDeath(playerName, win);
 		if (panel != null)
 		{
 			panel.updateOpponent();
 		}
+	}
+
+	// ---- Double-death recovery ----
+	// Both a win and a loss vs the same focused name land in bumpOpponentRecord, so this is where
+	// the pair gets spotted. When a win and a loss vs the same person fall within a few ticks, pop
+	// a prompt to log whatever was looted back; the amount goes onto session + baseline profit.
+
+	private void checkDoubleDeath(String name, boolean win)
+	{
+		if (!config.showDoubleDeath() || name == null)
+		{
+			return;
+		}
+		final int tick = client.getTickCount();
+		if (win)
+		{
+			lastWinName = name;
+			lastWinTick = tick;
+			if (name.equalsIgnoreCase(lastLossName) && tick - lastLossTick <= DOUBLE_DEATH_WINDOW_TICKS)
+			{
+				onDoubleDeath(name);
+			}
+		}
+		else
+		{
+			lastLossName = name;
+			lastLossTick = tick;
+			if (name.equalsIgnoreCase(lastWinName) && tick - lastWinTick <= DOUBLE_DEATH_WINDOW_TICKS)
+			{
+				onDoubleDeath(name);
+			}
+		}
+	}
+
+	private void onDoubleDeath(String name)
+	{
+		// Consume the pair so a later unrelated event can't re-fire the same double death.
+		lastWinName = null;
+		lastLossName = null;
+		pendingDoubleDeathName = name;
+		log.debug("double death vs {} — prompting for recovered value", name);
+		updatePanel();
+	}
+
+	/** True while the double-death prompt is up; the overlay renders off this. */
+	String pendingDoubleDeathName()
+	{
+		return pendingDoubleDeathName;
+	}
+
+	/** Right-click "Enter recovered" on the overlay: ask for the gp looted back. */
+	private void promptRecovered()
+	{
+		final String name = pendingDoubleDeathName;
+		if (name == null || client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		chatboxPanelManager.openTextInput("Amount looted back from double death vs " + name + ":")
+			.value("")
+			.addCharValidator(c -> Character.isLetterOrDigit(c) || c == '.' || c == ',' || c == ' ')
+			.onDone((Consumer<String>) this::submitRecovered)
+			.build();
+	}
+
+	void submitRecovered(String value)
+	{
+		// "4m", "4000k", "4,000,000", "4000000" all land on the same number — see GpFormat.parseGp.
+		recordRecovered(GpFormat.parseGp(value));
+	}
+
+	private void recordRecovered(long gp)
+	{
+		final String name = pendingDoubleDeathName;
+		pendingDoubleDeathName = null;
+		if (gp > 0)
+		{
+			session.addRecovered(gp);
+			baseline.addRecovered(gp);
+			save();
+			log.debug("recovered {} gp from double death vs {}", gp, name);
+		}
+		updatePanel();
+	}
+
+	void dismissDoubleDeath()
+	{
+		pendingDoubleDeathName = null;
+		updatePanel();
 	}
 
 	// ---- fight history + known names: everything the panel's Past Fights lists and the
@@ -2139,6 +2252,24 @@ public class PvpProfitTrackerPlugin extends Plugin
 				updateRisk();
 			}
 		});
+	}
+
+	@Subscribe
+	public void onOverlayMenuClicked(OverlayMenuClicked e)
+	{
+		if (e.getOverlay() != doubleDeathOverlay)
+		{
+			return;
+		}
+		final String option = e.getEntry().getOption();
+		if (DoubleDeathOverlay.ENTER.equals(option))
+		{
+			promptRecovered();
+		}
+		else if (DoubleDeathOverlay.DISMISS.equals(option))
+		{
+			dismissDoubleDeath();
+		}
 	}
 
 	private void loadKeepPriority()

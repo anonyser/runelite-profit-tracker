@@ -70,6 +70,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 	private long lastRefreshAt;
 	private long lastOpponentAt;
 
+	// Double-death recovery card (top of the panel; only shown while a double death is pending)
+	private final JPanel doubleDeathHolder;
+	private final JLabel doubleDeathCaption = captionLabel(null);
+	private final javax.swing.JTextField recoveredField = new javax.swing.JTextField();
+
 	// Risk (top of the panel)
 	private final JPanel riskHolder;
 	private final JLabel riskValue = valueLabel();
@@ -175,6 +180,29 @@ class PvpProfitTrackerPanel extends PluginPanel
 		tip.setBorder(new EmptyBorder(2, 8, 6, 8));
 		tip.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+		// Double-death recovery card: only visible while a double death is waiting for its value.
+		recoveredField.setToolTipText("Amount you looted back; press Enter to add");
+		recoveredField.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		recoveredField.setForeground(Color.WHITE);
+		recoveredField.setCaretColor(Color.WHITE);
+		recoveredField.setBorder(new EmptyBorder(3, 4, 3, 4));
+		recoveredField.setAlignmentX(Component.LEFT_ALIGNMENT);
+		recoveredField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
+		recoveredField.addActionListener(e -> submitRecovered());
+		final JLabel ddNote = noteLabel();
+		ddNote.setText("<html>You and your opponent died together. Enter what you looted "
+			+ "back — it's added to session and baseline profit.</html>");
+		final JPanel ddButtons = new JPanel(new java.awt.GridLayout(1, 2, 6, 0));
+		ddButtons.setOpaque(false);
+		ddButtons.setAlignmentX(Component.LEFT_ALIGNMENT);
+		ddButtons.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+		ddButtons.add(button("Add", this::submitRecovered));
+		ddButtons.add(button("Dismiss", plugin::dismissDoubleDeath));
+		doubleDeathHolder = holder(section("Double death", doubleDeathCaption, ddNote,
+			recoveredField, ddButtons));
+		doubleDeathHolder.setVisible(false);
+
+		body.add(doubleDeathHolder);
 		body.add(riskHolder);
 		body.add(opponentHolder);
 		body.add(profitHolder);
@@ -257,6 +285,14 @@ class PvpProfitTrackerPanel extends PluginPanel
 		final Stats baseline = plugin.getBaseline();
 		final Stats actual = plugin.getActual();
 
+		final String ddName = plugin.pendingDoubleDeathName();
+		final boolean ddPending = ddName != null && config.showDoubleDeath();
+		doubleDeathHolder.setVisible(ddPending);
+		if (ddPending)
+		{
+			doubleDeathCaption.setText("vs " + ddName);
+		}
+
 		riskValue.setText(plugin.fmt(plugin.getRiskGp()));
 		riskHolder.setVisible(config.showRisk());
 
@@ -321,6 +357,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 		label.setForeground(profit >= 0 ? config.profitColor() : config.lossColor());
 		rowPanel.setToolTipText("<html>Loot keys: " + PvpProfitTrackerPlugin.gpFull(s.gainedGp)
 			+ "<br>Crates: " + PvpProfitTrackerPlugin.gpFull(s.crateGp)
+			+ (s.recoveredGp > 0 ? "<br>Recovered: " + PvpProfitTrackerPlugin.gpFull(s.recoveredGp) : "")
 			+ "<br>Deaths: -" + PvpProfitTrackerPlugin.gpFull(s.lostToDeathGp)
 			+ "<br>Consumables: -" + PvpProfitTrackerPlugin.gpFull(s.consumedGp) + "</html>");
 	}
@@ -421,6 +458,13 @@ class PvpProfitTrackerPanel extends PluginPanel
 		b.addActionListener(e -> action.run());
 		b.setAlignmentX(Component.LEFT_ALIGNMENT);
 		return b;
+	}
+
+	/** Hand the typed amount to the plugin (which parses it) and clear the field. */
+	private void submitRecovered()
+	{
+		plugin.submitRecovered(recoveredField.getText());
+		recoveredField.setText("");
 	}
 
 	/**

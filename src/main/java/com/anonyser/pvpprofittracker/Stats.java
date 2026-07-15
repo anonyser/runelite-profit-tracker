@@ -2,8 +2,9 @@ package com.anonyser.pvpprofittracker;
 
 /**
  * A mutable tally for one tracking mode (session / baseline; "actual" uses only kills and deaths).
- * All gp values are in coins. Profit is event-sourced: loot-key gains plus crate rewards, minus
- * what's lost on death, minus consumables used in PvP — never a net-worth diff.
+ * All gp values are in coins. Profit is event-sourced: loot-key gains plus crate rewards and any
+ * double-death recovery, minus what's lost on death, minus consumables used in PvP — never a
+ * net-worth diff.
  */
 class Stats
 {
@@ -12,13 +13,14 @@ class Stats
 	long gainedGp;      // loot keys claimed
 	long lostToDeathGp; // risk lost on our deaths
 	long consumedGp;    // food / potions used in PvP
+	long recoveredGp;   // gp looted back after a double death (manual entry)
 	long crates;        // Bounty Hunter crates received
 	long crateGp;       // value looted from opened Bounty Hunter crates
 	long points;        // Bounty Hunter points gained
 
 	long profit()
 	{
-		return gainedGp + crateGp - lostToDeathGp - consumedGp;
+		return gainedGp + crateGp + recoveredGp - lostToDeathGp - consumedGp;
 	}
 
 	double kd()
@@ -45,6 +47,11 @@ class Stats
 	void addConsumed(long gp)
 	{
 		consumedGp += gp;
+	}
+
+	void addRecovered(long gp)
+	{
+		recoveredGp += gp;
 	}
 
 	void addCrates(int n)
@@ -75,6 +82,7 @@ class Stats
 		gainedGp = 0;
 		lostToDeathGp = 0;
 		consumedGp = 0;
+		recoveredGp = 0;
 		crateGp = 0;
 	}
 
@@ -109,6 +117,7 @@ class Stats
 		gainedGp = o.gainedGp;
 		lostToDeathGp = o.lostToDeathGp;
 		consumedGp = o.consumedGp;
+		recoveredGp = o.recoveredGp;
 		crates = o.crates;
 		crateGp = o.crateGp;
 		points = o.points;

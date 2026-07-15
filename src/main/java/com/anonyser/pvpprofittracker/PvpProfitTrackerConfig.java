@@ -103,6 +103,22 @@ public interface PvpProfitTrackerConfig extends Config
 		return new Color(216, 60, 62);
 	}
 
+	@ConfigItem(
+		keyName = "showDoubleDeath",
+		name = "Double death recovery",
+		description = "When you and your opponent die within a few seconds of"
+			+ "<br>each other, pop a prompt to log how much you looted"
+			+ "<br>back. What you enter is added to session and baseline"
+			+ "<br>profit. Right-click the prompt to enter the amount or"
+			+ "<br>dismiss it.",
+		position = 4,
+		section = displaySection
+	)
+	default boolean showDoubleDeath()
+	{
+		return true;
+	}
+
 	// --- Trackers (listed in display order: K/D, profit, risk, net worth, crates, points) ---
 
 	@ConfigItem(
