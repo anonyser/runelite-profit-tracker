@@ -1,10 +1,14 @@
+<p align="center">
+  <img src="docs/banner.png" alt="my osrs character, made out of text" width="400">
+</p>
+
 # PvP Profit Tracker
 
 A RuneLite plugin that tracks your **real** PvP profit — not just what you loot, but what it actually
 costs you. Profit is an event ledger:
 
 ```
-profit = loot-key gains + crate rewards − death losses − consumables used in PvP
+profit = loot-key gains + crate rewards + recovered loot − death losses − consumables used in PvP
 ```
 
 Buying supplies at the GE never touches profit — a loss only happens when you die or when you use
@@ -19,11 +23,18 @@ Display-only. It reads game state and shows numbers; it never sends input or act
 - **Profit** — loot keys, Bounty Hunter crate rewards (booked once, when the crate is opened), death
   losses (the risk you were carrying), and consumables: food, potions, and chugging-barrel sips, each
   priced at what you actually used (a brew sip costs one dose, not a whole potion).
+- **Double death recovery** — when you and your focused opponent die within a few seconds of each
+  other, a flashing **DOUBLE DEATH** prompt shows up with their name on it and stays until you deal
+  with it. A **Double death** card appears at the top of the side panel: type what you looted back
+  and hit **Add**, or **Dismiss** if you got nothing. It takes `4m`, `4000k`, `4,000,000` or plain
+  numbers. What you enter goes onto both session and baseline profit, so a double death you partly
+  recover from doesn't read as a straight loss. Drag the prompt wherever you want it. Toggleable
+  under **Display**.
 - **Risk** — live "what you'd lose if you died right now": kept-items aware (3 kept, 4 with Protect
   Item, 0 skulled, 1 skulled with Protect Item), with untradeables priced at their repair-on-death cost
   from a bundled table.
 - **Net worth** — bank + carried + chugging-barrel contents, GE prices with high-alch for untradeables.
-  Informational only; it never feeds profit.
+  Open your bank to record it. Informational only; it never feeds profit.
 - **Bounty Hunter** — crates received and their reward values, plus points: your current balance and
   points gained, read from the game's own data so kills, streaks and emblem turn-ins all count exactly.
 - **Actual K/D** — read straight from the game's own stats: the Kill Death Ratio window at Edgeville,
@@ -48,7 +59,9 @@ Most values come in up to three flavours, each toggleable:
 - **Actual** — your true in-game value (K/D and points balance).
 - **Session** — this session only; resets when the client restarts.
 - **Baseline** — a long-term tally that keeps saving across sessions until you reset it. Reset buttons
-  live on the plugin's side panel (the green `$` icon in the sidebar).
+  live on the plugin's side panel (the skulls icon in the sidebar).
+
+Tallies are saved per account, so each one keeps its own numbers.
 
 ## Gear inspect
 
@@ -60,16 +73,39 @@ any adding up is yours to do.
 
 Receiving a Bounty Hunter target runs an automatic stat lookup, the same behaviour as the core
 Hiscore plugin's "Bounty lookup" option: combat levels from the public hiscores, plus Bounty
-Hunter kills, Colosseum glory, TzKal-Zuk and Sol Heredit kill counts where ranked. The target's
-gear is not shown unless you right-click and Inspect them yourself. **Clear** on the side panel
-drops the focused player, and five minutes out of sight drops them automatically.
+Hunter kills, Colosseum glory, TzKal-Zuk, Sol Heredit, Vardorvis and Jad kill counts where ranked.
+The target's gear is not shown unless you right-click and Inspect them yourself. With
+**Auto-inspect new target** on (under **Opponent gear**) the side panel opens on the new target's
+gear by itself. If you also run PvP Performance Tracker, turn its auto-open off so the two don't
+fight over the sidebar.
+
+## Side panel
+
+The skulls icon in the sidebar. It holds the full breakdown, the crate-value flash when you open a
+crate, and the resets: **Reset session**, **Reset baseline K/D**, **Reset baseline profit**,
+**Reset baseline crates**, **Reset baseline points**.
+
+The focused player sits at the top. **Clear** drops them, and five minutes out of sight drops them
+automatically. While someone is focused you also get:
+
+- **Notes** — free-form, and they stick to that player between sessions.
+- **W/L** — your record against them, green when you're ahead, red when you're behind.
+- **Past fights** — every kill and death you've had with them, newest first.
+
+**Lookup** takes any player name: type it, press Enter, and you get their hiscore stats plus your
+notes and W/L for that name, without having seen them. Names you already know pop up under the
+field as you type, arrow keys to pick one, and the ✕ on a row forgets that name.
+
+With nobody focused, **Past fights** lists all of them, newest first, up to the last 500. Click a
+name for your full history with that player. A fight only gets recorded when a kill or a death
+actually lands, so encounters that went nowhere never show up.
 
 ## Config
 
-Everything is toggleable under **Trackers**, number formatting (full `1,428,638` or compact `1.428M`)
-under **Display**, the gear inspect under **Opponent gear**, and the Wilderness/PvP-only gate
-under **Advanced**. The side panel shows the full
-breakdown, the baseline resets, and the crate-value flash when you open a crate.
+Everything is toggleable. **Display** holds the overlay on/off switch, number formatting (full
+`1,428,638` or compact `1.428M`), the profit and loss colours, and the double death prompt.
+**Trackers** holds the individual trackers. **Opponent gear** holds the gear inspect and
+auto-inspect. **Advanced** holds the Wilderness/PvP-only gate and price overrides.
 
 ### Price overrides
 
