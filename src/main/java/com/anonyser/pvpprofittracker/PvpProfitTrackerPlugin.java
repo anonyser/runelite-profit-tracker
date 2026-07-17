@@ -18,16 +18,23 @@ import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
+import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.GameState;
+import net.runelite.api.Hitsplat;
+import net.runelite.api.HitsplatID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.Player;
+import net.runelite.api.Skill;
 import net.runelite.api.SkullIcon;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.InteractingChanged;
+import net.runelite.api.kit.KitType;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
@@ -247,6 +254,60 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// Bumped on every history change so the panel rebuilds its lists only when needed.
 	private volatile int fightRev;
 
+	// Fight breakdowns: a hit-by-hit log recorded while you fight the focused opponent, saved only
+	// when the fight actually lands in the W/L/D record, keyed by the Fight entry's ts. Same monitor
+	// discipline as fights: written on the client thread, read as copies from the EDT.
+	private static final String K_FIGHT_LOGS = "fightlogs";
+	private final List<FightLog> fightLogs = new ArrayList<>();
+	private final FightRecorder fightRecorder = new FightRecorder();
+	private FightBreakdownWindow breakdownWindow; // created/disposed on the EDT
+	private FightDamageOverlay damageOverlay;
+	private OpponentHpOverlay oppHpOverlay;
+
+	/** Live per-tick fight state for the two small overlays. Immutable; null = no fight. */
+	static final class FightHud
+	{
+		final int mine;   // my damage so far
+		final int theirs; // theirs so far
+		final int hpVal;  // opponent HP estimate, -1 unknown
+		final int hpPct;  // opponent health-bar percent, -1 unknown
+
+		FightHud(int mine, int theirs, int hpVal, int hpPct)
+		{
+			this.mine = mine;
+			this.theirs = theirs;
+			this.hpVal = hpVal;
+			this.hpPct = hpPct;
+		}
+	}
+
+	private volatile FightHud fightHud;
+	// Attribution caches, client thread only. The opponent's weapon is sampled each tick (so a
+	// projectile hit blames the weapon that fired it, not a fresh switch); my own is read live at
+	// the splat. A spec-energy drop marks the throw tick + weapon for tagging the landing hit.
+	// The recorder follows whoever is ACTUALLY fighting me, focused or not: an interaction names
+	// the likely attacker (following/trading also fire this, so only a real hit starts a fight).
+	private String lastCandidateName;
+	// The opponent of the fight that JUST ended, kept for the double-death window: the first
+	// death finishes the recorder, so the counterpart death moments later needs this to still
+	// attribute (and form the draw) when that player was never the focused opponent.
+	private String lastFightEndName;
+	private int lastFightEndTick = -1000;
+	// Duplicate-death dedupe, written on every W/L bump and NEVER consumed (unlike the
+	// lastWin/lastLoss pair, which the draw merge deliberately eats): the death event can
+	// arrive more than once, and one kill must only ever count once.
+	private String lastBumpWinName;
+	private int lastBumpWinTick = -1000;
+	private String lastBumpLossName;
+	private int lastBumpLossTick = -1000;
+	private int oppWeaponId = -1;
+	private String oppWeaponName;
+	private int lastSpecEnergy = -1;
+	private int specDropTick = -1000;
+	private int specDropWeapon = -1;
+	private String specDropWeaponName;
+	private int specTaggedTick = -1000; // multi-splat specs (claws, dds) tag every splat that tick
+
 	// Focused-player gear inspect (right-click "Inspect" on a player, or a BH target).
 	private OpponentTracker opponentTracker;
 	private CombatCalc combatCalc;
@@ -340,6 +401,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 			overlayManager.add(overlay);
 			doubleDeathOverlay = new DoubleDeathOverlay(this, config);
 			overlayManager.add(doubleDeathOverlay);
+			damageOverlay = new FightDamageOverlay(client, this, config);
+			overlayManager.add(damageOverlay);
+			oppHpOverlay = new OpponentHpOverlay(client, this, config);
+			overlayManager.add(oppHpOverlay);
 			opponentTracker = new OpponentTracker(client, hiscoreManager, this, this::updateOpponentPanel);
 			combatCalc = new CombatCalc(client, itemManager);
 			panel = new PvpProfitTrackerPanel(this, config);
@@ -372,6 +437,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 			save();
 			overlayManager.remove(overlay);
 			overlayManager.remove(doubleDeathOverlay);
+			overlayManager.remove(damageOverlay);
+			overlayManager.remove(oppHpOverlay);
 			clientToolbar.removeNavigation(navButton);
 			if (panel != null)
 			{
@@ -379,7 +446,17 @@ public class PvpProfitTrackerPlugin extends Plugin
 			}
 			overlay = null;
 			doubleDeathOverlay = null;
+			damageOverlay = null;
+			oppHpOverlay = null;
 			pendingDoubleDeathName = null;
+			fightRecorder.discard();
+			fightHud = null;
+			final FightBreakdownWindow w = breakdownWindow;
+			breakdownWindow = null;
+			if (w != null)
+			{
+				SwingUtilities.invokeLater(w::dispose);
+			}
 			opponentTracker = null;
 			combatCalc = null;
 			maxHitInfo = null;
@@ -413,6 +490,16 @@ public class PvpProfitTrackerPlugin extends Plugin
 			deathKeepCalibrated = true; // stop any pending death-screen read
 			lastBhTargetName = null;
 			pendingAutoFocusName = null;
+			// A hop/logout ends the fight where it stands — keep what was recorded for review
+			// (a fight cut off mid-hop is still one worth reading back).
+			if (fightRecorder.isActive())
+			{
+				saveNoResultFight(client.getTickCount());
+			}
+			fightHud = null;
+			lastCandidateName = null;
+			lastSpecEnergy = -1;
+			specDropTick = -1000;
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
@@ -488,29 +575,419 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// crates being opened and items appearing. Resync fresh from the next change instead.
 			inventorySynced = false;
 			recordDeath(riskGp);
-			// W/L vs the focused opponent: only count the loss while they're actually
-			// in sight — dying somewhere else isn't their kill.
-			if (focused != null)
+			// W/L: an active (or just-ended, for the double-death window) fight log knows exactly
+			// who I was trading hits with, focused or not; without one, fall back to the focused
+			// opponent — and only while they're in sight, because dying somewhere else isn't
+			// their kill.
+			String lossVs = fightOpponentNow();
+			if (lossVs == null && focused != null)
 			{
 				final OpponentTracker.Snapshot opp = opponentTracker.snapshot();
 				if (opp != null && opp.visible)
 				{
-					bumpOpponentRecord(focused, false);
+					lossVs = focused;
 				}
+			}
+			// The death event can arrive more than once (seen live) — a second loss to the same
+			// name inside the double-death window can't be a real second fight.
+			if (lossVs != null
+				&& !(lossVs.equalsIgnoreCase(lastBumpLossName)
+					&& client.getTickCount() - lastBumpLossTick <= DOUBLE_DEATH_WINDOW_TICKS))
+			{
+				bumpOpponentRecord(lossVs, false);
 			}
 			return;
 		}
-		// Their death while focused = a win for you (name match is exact).
-		if (focused != null && e.getActor() instanceof Player
-			&& focused.equals(OpponentTracker.sanitizedName((Player) e.getActor())))
+		// Their death = a win: whether they were the focused opponent or just the player the
+		// fight log was trading hits with (name match is exact either way). Same duplicate-event
+		// guard as the loss side: one kill, one win.
+		if (e.getActor() instanceof Player)
 		{
-			bumpOpponentRecord(focused, true);
+			final String died = OpponentTracker.sanitizedName((Player) e.getActor());
+			if (died != null
+				&& !(died.equalsIgnoreCase(lastBumpWinName)
+					&& client.getTickCount() - lastBumpWinTick <= DOUBLE_DEATH_WINDOW_TICKS)
+				&& (died.equals(focused) || died.equalsIgnoreCase(fightOpponentNow())))
+			{
+				bumpOpponentRecord(died, true);
+			}
 		}
+	}
+
+	/**
+	 * Who the fight log says I'm fighting: the live opponent, or — within the double-death
+	 * window — the opponent of the fight that just ended, so the second death of a mutual kill
+	 * still attributes after the first one closed the log.
+	 */
+	private String fightOpponentNow()
+	{
+		if (fightRecorder.isActive())
+		{
+			return fightRecorder.opponentName();
+		}
+		if (lastFightEndName != null
+			&& client.getTickCount() - lastFightEndTick <= DOUBLE_DEATH_WINDOW_TICKS)
+		{
+			return lastFightEndName;
+		}
+		return null;
+	}
+
+	/**
+	 * A player targeting me (or me targeting one) names the likely opponent. Follows and trades
+	 * fire this too, so it only ever nominates — a real hit is what starts a fight.
+	 */
+	@Subscribe
+	public void onInteractingChanged(InteractingChanged e)
+	{
+		final Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			return;
+		}
+		if (e.getSource() instanceof Player && e.getSource() != me && e.getTarget() == me)
+		{
+			lastCandidateName = OpponentTracker.sanitizedName((Player) e.getSource());
+		}
+		else if (e.getSource() == me && e.getTarget() instanceof Player)
+		{
+			lastCandidateName = OpponentTracker.sanitizedName((Player) e.getTarget());
+		}
+	}
+
+	/**
+	 * Feed the fight recorder. Direction comes from which actor the splat lands ON — never from
+	 * isMine(), which is true for damage taken as well as dealt. The recorder follows whoever is
+	 * actually fighting me, target or not: my hit on any player opens (or continues) the fight
+	 * with them; a hit on me belongs to the current fight, or opens one against the player the
+	 * interaction naming pointed at — verified to really be on me before anything starts.
+	 */
+	@Subscribe
+	public void onHitsplatApplied(HitsplatApplied e)
+	{
+		if (!config.showFightLogs())
+		{
+			return;
+		}
+		final Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			return;
+		}
+		final Hitsplat hs = e.getHitsplat();
+		if (!isDamageFamily(hs.getHitsplatType()))
+		{
+			return;
+		}
+		final boolean onMe = e.getActor() == me;
+		final boolean onOther = !onMe && e.getActor() instanceof Player && hs.isMine();
+		if (!onMe && !onOther)
+		{
+			return;
+		}
+		final int tick = client.getTickCount();
+		if (!fightRecorder.isActive())
+		{
+			final String opponent;
+			if (onOther)
+			{
+				opponent = OpponentTracker.sanitizedName((Player) e.getActor());
+			}
+			else
+			{
+				// Their opener: only start when the named candidate is really here attacking me.
+				final Player cand = scenePlayerNamed(lastCandidateName);
+				opponent = cand != null && cand.getInteracting() == me ? lastCandidateName : null;
+			}
+			if (opponent == null)
+			{
+				return;
+			}
+			// A killing blow's splat can land AFTER the death event that closed the fight —
+			// re-opening a one-hit "fight" against a corpse whose log would then shadow the real
+			// one. Inside the double-death window, the just-ended fight stays ended.
+			if (opponent.equalsIgnoreCase(lastFightEndName)
+				&& tick - lastFightEndTick <= DOUBLE_DEATH_WINDOW_TICKS)
+			{
+				return;
+			}
+			fightRecorder.start(opponent, System.currentTimeMillis(), tick);
+			primeOpponentCaches(opponent);
+		}
+		else if (onOther && !fightRecorder.opponentName()
+			.equalsIgnoreCase(OpponentTracker.sanitizedName((Player) e.getActor())))
+		{
+			return; // splashing a third party mid-fight isn't part of this fight
+		}
+		else if (onMe && scenePlayerNamed(fightRecorder.opponentName()) == null)
+		{
+			return; // current opponent isn't even here — this damage is someone else's
+		}
+		final boolean byMe = onOther;
+		boolean spec = false;
+		int weapon;
+		String wname;
+		if (byMe)
+		{
+			if (tick - specDropTick <= FightRecorder.SPEC_WINDOW_TICKS || tick == specTaggedTick)
+			{
+				spec = true;
+				specTaggedTick = tick; // claws/dds land several splats on the one tick
+				specDropTick = -1000;  // consume, so a later ordinary hit isn't tagged
+				weapon = specDropWeapon > 0 ? specDropWeapon : wornWeaponId();
+				wname = specDropWeapon > 0 ? specDropWeaponName : weaponName(weapon);
+			}
+			else
+			{
+				weapon = wornWeaponId();
+				wname = weaponName(weapon);
+			}
+		}
+		else
+		{
+			weapon = oppWeaponId;
+			wname = oppWeaponName;
+		}
+		fightRecorder.onDamage(tick, byMe, hs.getAmount(), weapon, wname, spec);
+	}
+
+	/** Real combat damage (all tints, max-hit variants, and blocked zeros) — no poison/venom/heal. */
+	private static boolean isDamageFamily(int type)
+	{
+		switch (type)
+		{
+			case HitsplatID.BLOCK_ME:
+			case HitsplatID.BLOCK_OTHER:
+			case HitsplatID.DAMAGE_ME:
+			case HitsplatID.DAMAGE_ME_CYAN:
+			case HitsplatID.DAMAGE_ME_ORANGE:
+			case HitsplatID.DAMAGE_ME_YELLOW:
+			case HitsplatID.DAMAGE_ME_WHITE:
+			case HitsplatID.DAMAGE_ME_POISE:
+			case HitsplatID.DAMAGE_OTHER:
+			case HitsplatID.DAMAGE_OTHER_CYAN:
+			case HitsplatID.DAMAGE_OTHER_ORANGE:
+			case HitsplatID.DAMAGE_OTHER_YELLOW:
+			case HitsplatID.DAMAGE_OTHER_WHITE:
+			case HitsplatID.DAMAGE_OTHER_POISE:
+			case HitsplatID.DAMAGE_MAX_ME:
+			case HitsplatID.DAMAGE_MAX_ME_CYAN:
+			case HitsplatID.DAMAGE_MAX_ME_ORANGE:
+			case HitsplatID.DAMAGE_MAX_ME_YELLOW:
+			case HitsplatID.DAMAGE_MAX_ME_WHITE:
+			case HitsplatID.DAMAGE_MAX_ME_POISE:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/**
+	 * Per-tick fight-log upkeep. GameTick fires after the tick's hitsplats, so settling here
+	 * stamps each entry with the defender's HP once all of the tick's damage has applied.
+	 */
+	/** The overlays' live view of the current fight, or null. Safe from any thread. */
+	FightHud fightHud()
+	{
+		return fightHud;
+	}
+
+	private void fightTickUpkeep()
+	{
+		final int tick = client.getTickCount();
+		if (!fightRecorder.isActive())
+		{
+			fightHud = null;
+			return;
+		}
+		fightRecorder.settle(myBoostedHp(), opponentEstimatedHp(), wearingReflectRing());
+		// A no-result fight should land in Past Fights as soon as the fight is clearly over, not
+		// after the full quiet timer: the bank being open, the opponent gone from the scene, or
+		// neither side targeting the other all end it early (each with a short guard so a lull in
+		// a live fight doesn't split it). The long timer stays as the fallback.
+		final int quiet = fightRecorder.quietTicks(tick);
+		final Player me = client.getLocalPlayer();
+		final Player fightOpp = scenePlayerNamed(fightRecorder.opponentName());
+		final boolean over =
+			quiet > FightRecorder.DISENGAGE_TICKS
+			|| (bankInterfaceOpen && quiet >= 5)
+			|| (fightOpp == null && quiet >= 10)
+			|| (fightOpp != null && me != null && quiet >= 17
+				&& fightOpp.getInteracting() != me && me.getInteracting() != fightOpp);
+		if (over)
+		{
+			saveNoResultFight(tick);
+			fightHud = null;
+			return;
+		}
+		fightHud = new FightHud(fightRecorder.totalMine(), fightRecorder.totalTheirs(),
+			opponentEstimatedHp(), opponentHealthPercent());
+		// Sample the opponent's weapon for next tick's attribution: a projectile hit should blame
+		// the weapon that fired it, and their weapon can't be read at all once they despawn. Also
+		// keep their hiscore lookup warm — the HP estimate needs their Hitpoints level even when
+		// they were never focused.
+		primeOpponentCaches(fightRecorder.opponentName());
+	}
+
+	/**
+	 * A fight that went quiet with nobody dead still gets kept for review: a "No result" entry in
+	 * Past Fights plus its breakdown — but it never touches the W/L record. A lone stray splat
+	 * (someone tagging you once and leaving) isn't a fight and is dropped.
+	 */
+	private void saveNoResultFight(int tick)
+	{
+		final String name = fightRecorder.opponentName();
+		final long ts = System.currentTimeMillis();
+		final FightLog fl = fightRecorder.finish("No result", ts, tick, wearingReflectRing());
+		if (fl == null || name == null || fl.hits.size() < 2)
+		{
+			return;
+		}
+		final Player p = scenePlayerNamed(name);
+		final OpponentTracker.Snapshot opp = opponentTracker == null ? null : opponentTracker.snapshot();
+		final FightHistory.Fight f = new FightHistory.Fight(
+			name,
+			p != null ? p.getCombatLevel() : -1,
+			opp != null && opp.bhTarget && opponentTracker != null
+				&& name.equalsIgnoreCase(opponentTracker.focusedName()),
+			client.getWorldType().contains(WorldType.BOUNTY),
+			false,
+			ts);
+		f.noResult = true;
+		synchronized (fights)
+		{
+			FightHistory.append(fights, f);
+			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY,
+				FightHistory.serialize(gson, fights));
+		}
+		synchronized (fightLogs)
+		{
+			FightLog.append(fightLogs, fl);
+			saveFightLogs();
+		}
+		fightRev++;
+		rememberName(name);
+		if (panel != null)
+		{
+			panel.updateOpponent();
+		}
+	}
+
+	/** Refresh the fight opponent's weapon cache and keep their async hiscore lookup moving. */
+	private void primeOpponentCaches(String opponentName)
+	{
+		final Player opp = scenePlayerNamed(opponentName);
+		if (opp != null && opp.getPlayerComposition() != null)
+		{
+			final int w = opp.getPlayerComposition().getEquipmentId(KitType.WEAPON);
+			oppWeaponId = w > 0 ? w : -1;
+			oppWeaponName = w > 0 ? itemName(w) : null;
+		}
+		if (opponentName != null)
+		{
+			// Async and cached inside HiscoreManager; null until the fetch lands, so just keep
+			// asking — the same poll-until-cached pattern the gear inspect uses.
+			hiscoreManager.lookupAsync(opponentName, net.runelite.client.hiscore.HiscoreEndpoint.NORMAL);
+		}
+	}
+
+	private int wornWeaponId()
+	{
+		final ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		final Item w = worn == null ? null : worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+		return w == null || w.getId() <= 0 ? -1 : w.getId();
+	}
+
+	private String weaponName(int id)
+	{
+		return id > 0 ? itemName(id) : null;
+	}
+
+	private int myBoostedHp()
+	{
+		return client.getBoostedSkillLevel(Skill.HITPOINTS);
+	}
+
+	private boolean wearingReflectRing()
+	{
+		final ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		final Item r = worn == null ? null : worn.getItem(EquipmentInventorySlot.RING.getSlotIdx());
+		final int id = r == null ? -1 : r.getId();
+		return id == 2550 || id == 19710 || id == 19714; // ring of recoil, suffering (r)/(ri)
+	}
+
+	/**
+	 * The fight opponent's HP right now: their overhead health-bar fraction times their hiscore
+	 * Hitpoints level. -1 when the bar isn't showing or the level isn't known — an estimate is
+	 * only offered when both halves are real.
+	 */
+	private int opponentEstimatedHp()
+	{
+		if (!fightRecorder.isActive())
+		{
+			return -1;
+		}
+		final Player p = scenePlayerNamed(fightRecorder.opponentName());
+		if (p == null)
+		{
+			return -1;
+		}
+		final net.runelite.client.hiscore.HiscoreResult hr = hiscoreManager.lookupAsync(
+			fightRecorder.opponentName(), net.runelite.client.hiscore.HiscoreEndpoint.NORMAL);
+		final net.runelite.client.hiscore.Skill hp =
+			hr == null ? null : hr.getSkill(net.runelite.client.hiscore.HiscoreSkill.HITPOINTS);
+		final int level = hp == null ? -1 : hp.getLevel();
+		if (level <= 0)
+		{
+			return -1;
+		}
+		final int ratio = p.getHealthRatio();
+		final int scale = p.getHealthScale();
+		if (ratio < 0 || scale <= 0)
+		{
+			return -1;
+		}
+		return (int) Math.round(level * (ratio / (double) scale));
+	}
+
+	/** The fight opponent's health-bar percent (0..100), or -1 with no bar / no fight. */
+	private int opponentHealthPercent()
+	{
+		if (!fightRecorder.isActive())
+		{
+			return -1;
+		}
+		final Player p = scenePlayerNamed(fightRecorder.opponentName());
+		if (p == null)
+		{
+			return -1;
+		}
+		final int ratio = p.getHealthRatio();
+		final int scale = p.getHealthScale();
+		if (ratio < 0 || scale <= 0)
+		{
+			return -1;
+		}
+		return Math.min(100, (int) Math.round(ratio * 100.0 / scale));
 	}
 
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged e)
 	{
+		// Spec energy dropping = a special attack was just thrown; remember the tick and weapon so
+		// the damage that lands moments later gets tagged as the spec in the fight log.
+		if (e.getVarbitId() == -1 && e.getVarpId() == VarPlayerID.SA_ENERGY)
+		{
+			final int energy = e.getValue();
+			if (lastSpecEnergy >= 0 && energy < lastSpecEnergy)
+			{
+				specDropTick = client.getTickCount();
+				specDropWeapon = wornWeaponId();
+				specDropWeaponName = weaponName(specDropWeapon);
+			}
+			lastSpecEnergy = energy;
+			return;
+		}
 		// The game keeps the player's Bounty Hunter points in a varp — track its increases so kills,
 		// streak/threshold bonuses and emblem turn-ins all count with the game's own numbers.
 		if (e.getVarbitId() != -1 || e.getVarpId() != VarPlayerID.BH_2023_POINTS)
@@ -679,6 +1156,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// The player's OWN max hit, re-read every tick: gear, prayers and boosts all change
 		// without a single dedicated event.
 		maxHitInfo = combatCalc != null && config.showMaxHit() ? combatCalc.ownMaxHit() : null;
+		if (config.showFightLogs())
+		{
+			fightTickUpkeep();
+		}
 		if (!deathKeepCalibrated)
 		{
 			deathKeepCalibrated = calibrateSkullFromDeathScreen();
@@ -1581,28 +2062,43 @@ public class PvpProfitTrackerPlugin extends Plugin
 		return "oppwl_" + playerName.toLowerCase().replaceAll("[^a-z0-9]", "_");
 	}
 
-	/** Your lifetime record against this player: [your kills on them, their kills on you]. */
+	/**
+	 * Your lifetime record against this player: [kills on them, their kills on you, draws].
+	 * Stored as "w/l/d"; values written before draws existed are plain "w/l" and read as zero
+	 * draws.
+	 */
 	int[] opponentRecord(String playerName)
 	{
 		final String s =
 			configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName));
 		if (s == null)
 		{
-			return new int[]{0, 0};
+			return new int[]{0, 0, 0};
 		}
 		final String[] parts = s.split("/");
 		try
 		{
-			return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
+			return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
+				parts.length > 2 ? Integer.parseInt(parts[2]) : 0};
 		}
 		catch (NumberFormatException | ArrayIndexOutOfBoundsException ex)
 		{
-			return new int[]{0, 0};
+			return new int[]{0, 0, 0};
 		}
 	}
 
 	private void bumpOpponentRecord(String playerName, boolean win)
 	{
+		if (win)
+		{
+			lastBumpWinName = playerName;
+			lastBumpWinTick = client.getTickCount();
+		}
+		else
+		{
+			lastBumpLossName = playerName;
+			lastBumpLossTick = client.getTickCount();
+		}
 		final int[] record = opponentRecord(playerName);
 		if (win)
 		{
@@ -1613,7 +2109,7 @@ public class PvpProfitTrackerPlugin extends Plugin
 			record[1]++;
 		}
 		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(playerName),
-			record[0] + "/" + record[1]);
+			record[0] + "/" + record[1] + "/" + record[2]);
 		recordFight(playerName, win);
 		checkDoubleDeath(playerName, win);
 		if (panel != null)
@@ -1629,7 +2125,8 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private void checkDoubleDeath(String name, boolean win)
 	{
-		if (!config.showDoubleDeath() || name == null)
+		// Always detected — the draw record depends on it; only the recovery PROMPT is optional.
+		if (name == null)
 		{
 			return;
 		}
@@ -1659,9 +2156,56 @@ public class PvpProfitTrackerPlugin extends Plugin
 		// Consume the pair so a later unrelated event can't re-fire the same double death.
 		lastWinName = null;
 		lastLossName = null;
-		pendingDoubleDeathName = name;
-		log.debug("double death vs {} — prompting for recovered value", name);
+		mergeDrawRecords(name);
+		if (config.showDoubleDeath())
+		{
+			pendingDoubleDeathName = name;
+			log.debug("double death vs {} — prompting for recovered value", name);
+		}
 		updatePanel();
+	}
+
+	/**
+	 * A double death just wrote a win AND a loss vs this name — collapse them into one draw:
+	 * one history entry, one net draw on the W/L/D record, and the pair's fight log (saved by
+	 * whichever death came first) relabelled.
+	 */
+	private void mergeDrawRecords(String name)
+	{
+		FightHistory.Fight drawFight;
+		synchronized (fights)
+		{
+			drawFight = FightHistory.mergeDoubleDeath(fights, name, 60_000);
+			if (drawFight != null)
+			{
+				configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY,
+					FightHistory.serialize(gson, fights));
+			}
+		}
+		if (drawFight == null)
+		{
+			return;
+		}
+		fightRev++;
+		final int[] r = opponentRecord(name);
+		r[0] = Math.max(0, r[0] - 1);
+		r[1] = Math.max(0, r[1] - 1);
+		r[2]++;
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, wlKey(name),
+			r[0] + "/" + r[1] + "/" + r[2]);
+		synchronized (fightLogs)
+		{
+			final FightLog fl = FightLog.byTs(fightLogs, drawFight.ts);
+			if (fl != null)
+			{
+				fl.outcome = "Draw";
+				saveFightLogs();
+			}
+		}
+		if (panel != null)
+		{
+			panel.updateOpponent();
+		}
 	}
 
 	/** True while the double-death prompt is up; the overlay renders off this. */
@@ -1722,6 +2266,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			fights.clear();
 			fights.addAll(FightHistory.parse(gson,
 				configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY)));
+		}
+		synchronized (fightLogs)
+		{
+			fightLogs.clear();
+			fightLogs.addAll(FightLog.parse(gson,
+				configManager.getConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_LOGS)));
 		}
 		synchronized (knownNames)
 		{
@@ -1801,7 +2351,9 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final FightHistory.Fight f = new FightHistory.Fight(
 			playerName,
 			p != null ? p.getCombatLevel() : -1,
-			opp != null && opp.bhTarget,
+			// The target flag belongs to the focused snapshot — only honest when THIS fight is them.
+			opp != null && opp.bhTarget && opponentTracker != null
+				&& playerName.equalsIgnoreCase(opponentTracker.focusedName()),
 			client.getWorldType().contains(WorldType.BOUNTY),
 			win,
 			System.currentTimeMillis());
@@ -1811,10 +2363,67 @@ public class PvpProfitTrackerPlugin extends Plugin
 			configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_HISTORY,
 				FightHistory.serialize(gson, fights));
 		}
+		// The recorder's log becomes this fight's breakdown, keyed by the entry's ts. In a double
+		// death only the FIRST record finds the recorder active — the draw merge that follows keeps
+		// that first ts, so the key survives the collapse.
+		if (config.showFightLogs() && fightRecorder.isActive()
+			&& playerName.equalsIgnoreCase(fightRecorder.opponentName()))
+		{
+			lastFightEndName = playerName;
+			lastFightEndTick = client.getTickCount();
+			final FightLog fl = fightRecorder.finish(win ? "Win" : "Loss", f.ts,
+				client.getTickCount(), wearingReflectRing());
+			if (fl != null)
+			{
+				synchronized (fightLogs)
+				{
+					FightLog.append(fightLogs, fl);
+					saveFightLogs();
+				}
+			}
+		}
 		fightRev++;
 		rememberName(playerName);
 		log.debug("fight recorded: {} {} (cmb={}, target={}, bh={})",
 			win ? "WIN vs" : "LOSS to", playerName, f.cmb, f.target, f.bh);
+	}
+
+	/** Callers hold the fightLogs monitor. */
+	private void saveFightLogs()
+	{
+		configManager.setConfiguration(PvpProfitTrackerConfig.GROUP, K_FIGHT_LOGS,
+			FightLog.serialize(gson, fightLogs));
+	}
+
+	/** The saved breakdown for the fight ending at this ts, or null. Safe from any thread. */
+	FightLog fightLogFor(long ts)
+	{
+		synchronized (fightLogs)
+		{
+			return FightLog.byTs(fightLogs, ts);
+		}
+	}
+
+	/** Open (or refocus) the breakdown viewer on this fight's log. EDT-safe. */
+	void openFightBreakdown(FightLog log)
+	{
+		if (log == null)
+		{
+			return;
+		}
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel == null)
+			{
+				return; // the plugin stopped before this deferred open ran — don't resurrect a frame
+			}
+			if (breakdownWindow == null)
+			{
+				breakdownWindow = new FightBreakdownWindow(configManager, this::itemIcon,
+					(l, spriteId) -> spriteIcon(l, spriteId, 16));
+			}
+			breakdownWindow.show(log);
+		});
 	}
 
 	/** Names previously fought, inspected or looked up, most recent first. Safe from any thread. */
@@ -2238,6 +2847,20 @@ public class PvpProfitTrackerPlugin extends Plugin
 		if (!PvpProfitTrackerConfig.GROUP.equals(e.getGroup()))
 		{
 			return;
+		}
+		if (e.getKey() != null && e.getKey().startsWith("fightWindow"))
+		{
+			return; // the breakdown window saving its own bounds — nothing for us to reload
+		}
+		if ("showFightLogs".equals(e.getKey()) && !config.showFightLogs())
+		{
+			// Toggled off mid-fight: drop the frozen recorder or its stale hits would be
+			// persisted into whatever fight ends after the toggle comes back on.
+			clientThread.invoke(() ->
+			{
+				fightRecorder.discard();
+				fightHud = null;
+			});
 		}
 		clientThread.invoke(() ->
 		{

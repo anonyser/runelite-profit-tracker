@@ -933,7 +933,7 @@ class PvpProfitTrackerPanel extends PluginPanel
 			combatValue.setText(combat > 0 ? String.format("%.2f", combat) : "—");
 			combatRow.setVisible(true);
 			final int[] wl = plugin.opponentRecord(opp.name);
-			wlValue.setText(wl[0] + " – " + wl[1]);
+			wlValue.setText(wl[0] + " – " + wl[1] + (wl[2] > 0 ? " – " + wl[2] + "D" : ""));
 			wlValue.setForeground(
 				wl[0] > wl[1] ? TARGET_GREEN : wl[1] > wl[0] ? LOSS_RED : VALUE_COLOR);
 			wlRow.setVisible(true);
@@ -1019,17 +1019,26 @@ class PvpProfitTrackerPanel extends PluginPanel
 				none.setBorder(new EmptyBorder(2, 2, 2, 2));
 				globalList.add(none);
 			}
-			final int shown = Math.min(fights.size(), MAX_GLOBAL_SHOWN);
-			for (int i = 0; i < shown; i++)
+			// One row per opponent — the most recent fight with each; their older fights live in
+			// the per-player list behind the name click, so a busy hour doesn't wall the panel.
+			final java.util.Set<String> seen = new java.util.HashSet<>();
+			int shown = 0;
+			for (final FightHistory.Fight f : fights)
 			{
-				globalList.add(globalEntry(fights.get(i)));
+				if (!seen.add(f.name.toLowerCase()))
+				{
+					continue;
+				}
+				if (shown >= MAX_GLOBAL_SHOWN)
+				{
+					final JLabel more = noteLabel();
+					more.setText("Showing your " + shown + " most recent opponents.");
+					globalList.add(more);
+					break;
+				}
+				globalList.add(globalEntry(f));
 				globalList.add(vGap(4));
-			}
-			if (fights.size() > shown)
-			{
-				final JLabel more = noteLabel();
-				more.setText("Showing the " + shown + " most recent of " + fights.size() + ".");
-				globalList.add(more);
+				shown++;
 			}
 			globalList.revalidate();
 			globalList.repaint();
@@ -1078,13 +1087,11 @@ class PvpProfitTrackerPanel extends PluginPanel
 					plugin.lookupOpponent(f.name);
 				}
 			});
-			final JLabel outcome = new JLabel(f.win ? "WIN" : "LOSS");
-			outcome.setForeground(f.win ? TARGET_GREEN : LOSS_RED);
-			outcome.setFont(outcome.getFont().deriveFont(Font.BOLD));
-			p.add(lineRow(name, outcome));
+			p.add(lineRow(name, outcomeChip(f)));
 			final JLabel cmb = smallLabel("Cmb " + (f.cmb > 0 ? Integer.toString(f.cmb) : "—"));
 			final int[] wl = plugin.opponentRecord(f.name);
-			final JLabel record = smallLabel("W/L " + wl[0] + " – " + wl[1]);
+			final JLabel record = smallLabel((wl[2] > 0 ? "W/L/D " : "W/L ")
+				+ wl[0] + " – " + wl[1] + (wl[2] > 0 ? " – " + wl[2] : ""));
 			record.setToolTipText("Your overall record against " + f.name);
 			record.setForeground(wl[0] > wl[1] ? TARGET_GREEN
 				: wl[1] > wl[0] ? LOSS_RED : ColorScheme.LIGHT_GRAY_COLOR);
@@ -1098,15 +1105,45 @@ class PvpProfitTrackerPanel extends PluginPanel
 		private JPanel perEntry(final FightHistory.Fight f)
 		{
 			final JPanel p = entryPanel();
-			final JLabel outcome = new JLabel(f.win ? "WIN" : "LOSS");
-			outcome.setForeground(f.win ? TARGET_GREEN : LOSS_RED);
-			outcome.setFont(outcome.getFont().deriveFont(Font.BOLD));
+			final JLabel outcome = outcomeChip(f);
 			outcome.setIconTextGap(4);
-			fightIcon(outcome, f);
+			final String clickTip = outcome.getToolTipText();
+			fightIcon(outcome, f); // sets the BH-context tooltip when the icon applies
+			if (clickTip != null)
+			{
+				// The click affordance must survive the icon's tooltip — show both.
+				outcome.setToolTipText(outcome.getToolTipText() == null ? clickTip
+					: "<html>" + outcome.getToolTipText() + "<br>" + clickTip + "</html>");
+			}
 			p.add(lineRow(outcome, null));
 			addTimestampLines(p, f, perRelUpdaters);
 			capHeight(p);
 			return p;
+		}
+
+		/** WIN / LOSS / DRAW — and a live link into the breakdown when this fight kept one. */
+		private JLabel outcomeChip(final FightHistory.Fight f)
+		{
+			final JLabel outcome = new JLabel(
+				f.outcomeText().toUpperCase(java.util.Locale.ENGLISH));
+			outcome.setForeground(f.draw ? FLASH_COLOR
+				: f.noResult ? ColorScheme.LIGHT_GRAY_COLOR : f.win ? TARGET_GREEN : LOSS_RED);
+			outcome.setFont(outcome.getFont().deriveFont(Font.BOLD));
+			if (plugin.fightLogFor(f.ts) != null)
+			{
+				outcome.setText(outcome.getText() + " ▸");
+				outcome.setCursor(new Cursor(Cursor.HAND_CURSOR));
+				outcome.setToolTipText("Open this fight's hit-by-hit breakdown");
+				outcome.addMouseListener(new MouseAdapter()
+				{
+					@Override
+					public void mousePressed(MouseEvent e)
+					{
+						plugin.openFightBreakdown(plugin.fightLogFor(f.ts));
+					}
+				});
+			}
+			return outcome;
 		}
 
 		private JPanel entryPanel()

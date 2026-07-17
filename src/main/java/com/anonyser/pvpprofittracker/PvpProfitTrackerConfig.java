@@ -119,6 +119,66 @@ public interface PvpProfitTrackerConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "showFightLogs",
+		name = "Fight breakdowns",
+		description = "Record a hit-by-hit breakdown of each fight with your focused"
+			+ "<br>opponent — every hit's weapon, damage and remaining HP."
+			+ "<br>Open one from Past fights by clicking the Win / Loss / Draw"
+			+ "<br>label. Only the most recent fights keep a breakdown.",
+		position = 5,
+		section = displaySection
+	)
+	default boolean showFightLogs()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showDamageOverlay",
+		name = "Damage overlay",
+		description = "A small overlay racing the current fight's damage:"
+			+ "<br>your total in green, their total in red. Vengeance and"
+			+ "<br>recoil damage count for whoever's side dealt them."
+			+ "<br>Movable and resizable — hold Alt to see and place its"
+			+ "<br>box even outside a fight.",
+		position = 6,
+		section = displaySection
+	)
+	default boolean showDamageOverlay()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showOppHpOverlay",
+		name = "Opponent HP overlay",
+		description = "The fight opponent's current hitpoints, live as you"
+			+ "<br>fight: green above half, red below, white when unknown."
+			+ "<br>Movable and resizable — hold Alt to see and place its"
+			+ "<br>box even outside a fight.",
+		position = 7,
+		section = displaySection
+	)
+	default boolean showOppHpOverlay()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "oppHpStyle",
+		name = "Opponent HP shows",
+		description = "What the opponent HP overlay displays: their hitpoints,"
+			+ "<br>the health-bar percent, or both. The hitpoints number"
+			+ "<br>needs their hiscore Hitpoints level to be known.",
+		position = 8,
+		section = displaySection
+	)
+	default HpDisplay oppHpStyle()
+	{
+		return HpDisplay.HITPOINTS;
+	}
+
 	// --- Trackers (listed in display order: K/D, profit, risk, net worth, crates, points) ---
 
 	@ConfigItem(
