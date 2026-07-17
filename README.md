@@ -30,6 +30,15 @@ Display-only. It reads game state and shows numbers; it never sends input or act
   numbers. What you enter goes onto both session and baseline profit, so a double death you partly
   recover from doesn't read as a straight loss. Drag the prompt wherever you want it. Toggleable
   under **Display**.
+- **Draws** — a double death also counts as one **draw** in your fight record instead of a win and
+  a loss, and records show wins, losses and draws.
+- **Fight breakdowns** — every fight records a breakdown. Open one from Past fights by clicking
+  the **Win / Loss / Draw** label: its own window with each hit as it happened, damage and timing,
+  totals up top. Only the most recent fights keep one; the one-line history keeps going
+  regardless. Toggleable under **Display**.
+- **Live fight overlays** — a damage counter for the current fight (yours in green, theirs in
+  red) and the opponent's current HP. Both movable and resizable — hold Alt to place them outside
+  a fight.
 - **Risk** — live "what you'd lose if you died right now": kept-items aware (3 kept, 4 with Protect
   Item, 0 skulled, 1 skulled with Protect Item), with untradeables priced at their repair-on-death cost
   from a bundled table.
@@ -89,21 +98,24 @@ The focused player sits at the top. **Clear** drops them, and five minutes out o
 automatically. While someone is focused you also get:
 
 - **Notes** — free-form, and they stick to that player between sessions.
-- **W/L** — your record against them, green when you're ahead, red when you're behind.
-- **Past fights** — every kill and death you've had with them, newest first.
+- **W/L** — your record against them (draws counted separately), green when you're ahead, red
+  when you're behind.
+- **Past fights** — every fight you've had with them, newest first.
 
 **Lookup** takes any player name: type it, press Enter, and you get their hiscore stats plus your
 notes and W/L for that name, without having seen them. Names you already know pop up under the
 field as you type, arrow keys to pick one, and the ✕ on a row forgets that name.
 
-With nobody focused, **Past fights** lists all of them, newest first, up to the last 500. Click a
-name for your full history with that player. A fight only gets recorded when a kill or a death
-actually lands, so encounters that went nowhere never show up.
+With nobody focused, **Past fights** shows one row per opponent — your most recent fight with
+them. Click a name for your full history with that player. Fights that end with nobody dead are
+kept too, marked **No result**; they never touch your record. Any fight's outcome label opens its
+breakdown when one is saved.
 
 ## Config
 
 Everything is toggleable. **Display** holds the overlay on/off switch, number formatting (full
-`1,428,638` or compact `1.428M`), the profit and loss colours, and the double death prompt.
+`1,428,638` or compact `1.428M`), the profit and loss colours, the double death prompt, the fight
+breakdowns, and the two fight overlays.
 **Trackers** holds the individual trackers. **Opponent gear** holds the gear inspect and
 auto-inspect. **Advanced** holds the Wilderness/PvP-only gate and price overrides.
 
