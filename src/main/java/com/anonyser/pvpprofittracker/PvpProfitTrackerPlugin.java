@@ -335,6 +335,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	// Live, display-only derived values.
 	private long riskGp;
+	// Risk as of the last tick the player was ALIVE. Death turns every prayer off, and when the
+	// death event lands a tick after the killing blow, the tick boundary in between recomputes
+	// risk WITHOUT Protect Item — so booking the live value would charge the protected item. The
+	// loss books from this snapshot instead; a smite still books correctly because it lands while
+	// the player is alive. -1 until first capture.
+	private long lastAliveRiskGp = -1;
 	private long netWorthGp;
 	private long bankValueGp;
 	private long lastRecordedNetWorth = -1; // persisted from a previous login; -1 = never recorded
@@ -569,12 +575,22 @@ public class PvpProfitTrackerPlugin extends Plugin
 		final String focused = opponentTracker == null ? null : opponentTracker.focusedName();
 		if (e.getActor() == me)
 		{
-			// Book the current at-risk value as the loss — it shows up as negative profit.
-			lastDeathTick = client.getTickCount();
+			// The death event can arrive more than once — a second death inside the double-death
+			// window can't be real, and must not book the gp loss twice.
+			final int deathTick = client.getTickCount();
+			final boolean duplicate = deathTick - lastDeathTick <= DOUBLE_DEATH_WINDOW_TICKS;
+			lastDeathTick = deathTick;
 			// Never diff the inventory across a death: the wipe-and-restore shuffle looks like
 			// crates being opened and items appearing. Resync fresh from the next change instead.
 			inventorySynced = false;
-			recordDeath(riskGp);
+			if (duplicate)
+			{
+				return;
+			}
+			// Book the loss from the last tick ALIVE: by the time this event lands, death has
+			// already switched Protect Item off (and can wipe the inventory), so the live risk
+			// can read both too high and too low here.
+			recordDeath(lastAliveRiskGp >= 0 ? lastAliveRiskGp : riskGp);
 			// W/L: an active (or just-ended, for the double-death window) fight log knows exactly
 			// who I was trading hits with, focused or not; without one, fall back to the focused
 			// opponent — and only while they're in sight, because dying somewhere else isn't
@@ -1145,6 +1161,10 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
 		updateRisk();
+		if (myBoostedHp() > 0)
+		{
+			lastAliveRiskGp = riskGp; // only while alive — the death tick must not overwrite it
+		}
 		if (opponentTracker != null && config.opponentRisk())
 		{
 			opponentTracker.onTick();
