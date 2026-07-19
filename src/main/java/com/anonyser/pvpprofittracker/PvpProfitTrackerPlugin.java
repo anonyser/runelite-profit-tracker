@@ -31,6 +31,7 @@ import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.SkullIcon;
 import net.runelite.api.WorldType;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.InteractingChanged;
@@ -61,6 +62,7 @@ import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
 import net.runelite.client.hiscore.HiscoreManager;
+import net.runelite.http.api.item.ItemPrice;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -341,6 +343,17 @@ public class PvpProfitTrackerPlugin extends Plugin
 	// loss books from this snapshot instead; a smite still books correctly because it lands while
 	// the player is alive. -1 until first capture.
 	private long lastAliveRiskGp = -1;
+	// Death latch: freezes lastAliveRiskGp from the moment the death is first visible — HP read
+	// as 0, or (on a laggy connection where the respawn is processed before the delayed death
+	// event) the respawn's teleport-plus-prayer-wipe — until the death books. Without it, a tick
+	// inside that window re-captures the snapshot with Protect Item off and the death books the
+	// protected item. Only ever engaged while an unconsumed snapshot exists, and released the
+	// moment the snapshot is consumed — a lingering latch would block the post-respawn captures
+	// and make the NEXT death book off nothing. Timed out in case no death follows the trigger.
+	private int deathLatchTick = -1;
+	private static final int DEATH_LATCH_TIMEOUT_TICKS = 25;
+	private boolean prevTickProtect;
+	private WorldPoint prevTickPos;
 	private long netWorthGp;
 	private long bankValueGp;
 	private long lastRecordedNetWorth = -1; // persisted from a previous login; -1 = never recorded
@@ -397,6 +410,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 	{
 		try
 		{
+			// A disable/enable while logged in reuses this instance — don't inherit stale state.
+			deathLatchTick = -1;
+			lastAliveRiskGp = -1;
+			prevTickProtect = false;
+			prevTickPos = null;
 			loadRepairCosts();
 			loadSkullIconMap();
 			loadKeepPriority();
@@ -506,6 +524,11 @@ public class PvpProfitTrackerPlugin extends Plugin
 			lastCandidateName = null;
 			lastSpecEnergy = -1;
 			specDropTick = -1000;
+			// A new world means the old risk snapshot can't be the one a death books.
+			deathLatchTick = -1;
+			lastAliveRiskGp = -1;
+			prevTickProtect = false;
+			prevTickPos = null;
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
@@ -590,7 +613,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 			// Book the loss from the last tick ALIVE: by the time this event lands, death has
 			// already switched Protect Item off (and can wipe the inventory), so the live risk
 			// can read both too high and too low here.
-			recordDeath(lastAliveRiskGp >= 0 ? lastAliveRiskGp : riskGp);
+			final long lost = lastAliveRiskGp >= 0 ? lastAliveRiskGp : riskGp;
+			// Consume the snapshot: the booked death releases the latch, and the next death must
+			// not reuse this value — it re-captures on the next unlatched alive tick.
+			deathLatchTick = -1;
+			lastAliveRiskGp = -1;
+			recordDeath(lost);
 			// W/L: an active (or just-ended, for the double-death window) fight log knows exactly
 			// who I was trading hits with, focused or not; without one, fall back to the focused
 			// opponent — and only while they're in sight, because dying somewhere else isn't
@@ -1161,10 +1189,43 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		// Keep risk current with prayer/skull changes too, not just inventory changes (e.g. getting smited).
 		updateRisk();
-		if (myBoostedHp() > 0)
+		final int hpNow = myBoostedHp();
+		final boolean protectNow = protectItemOn();
+		final Player meNow = client.getLocalPlayer();
+		final WorldPoint posNow = meNow != null ? meNow.getWorldLocation() : null;
+		final int tickNow = client.getTickCount();
+		// The latch only guards an unconsumed snapshot: once the death books it (setting -1),
+		// release at once so post-respawn ticks resume capturing — and give up on it if no death
+		// ever arrives (a false trigger must not starve the snapshot for long).
+		if (deathLatchTick >= 0
+			&& (lastAliveRiskGp < 0 || tickNow - deathLatchTick > DEATH_LATCH_TIMEOUT_TICKS))
+		{
+			deathLatchTick = -1;
+		}
+		if (deathLatchTick < 0 && lastAliveRiskGp >= 0)
+		{
+			if (hpNow <= 0)
+			{
+				// The death tick itself: freeze the last-alive snapshot until the death books.
+				deathLatchTick = tickNow;
+			}
+			else if (prevTickProtect && !protectNow && prevTickPos != null && posNow != null
+				&& prevTickPos.distanceTo(posNow) >= 20)
+			{
+				// Respawn signature on a laggy connection: the respawn's teleport landed (with its
+				// prayer wipe) before the delayed death event. Prayer losses that happen in place —
+				// a smite draining to zero, a Redemption proc, a manual toggle — don't move the
+				// player, so those keep capturing normally and a smite death still books the
+				// drained (unprotected) risk.
+				deathLatchTick = tickNow;
+			}
+		}
+		if (deathLatchTick < 0 && hpNow > 0)
 		{
 			lastAliveRiskGp = riskGp; // only while alive — the death tick must not overwrite it
 		}
+		prevTickProtect = protectNow;
+		prevTickPos = posNow;
 		if (opponentTracker != null && config.opponentRisk())
 		{
 			opponentTracker.onTick();
@@ -1384,6 +1445,12 @@ public class PvpProfitTrackerPlugin extends Plugin
 
 	private Player scenePlayerNamed(String name)
 	{
+		if (name == null)
+		{
+			// Callers pass whatever name they last saw — before any fight there may be none,
+			// and Text.toJagexName(null) throws.
+			return null;
+		}
 		final String jagex = Text.toJagexName(name);
 		final Player me = client.getLocalPlayer();
 		for (final Player p : client.getTopLevelWorldView().players())
@@ -1954,9 +2021,21 @@ public class PvpProfitTrackerPlugin extends Plugin
 		}
 		final int kept = keptCount();
 		long protectedValue = 0;
-		for (int i = 0; i < items.size() && i < kept; i++)
+		int slots = 0;
+		for (final long[] it : items)
 		{
-			protectedValue += items.get(i)[1];
+			if (slots >= kept)
+			{
+				break;
+			}
+			// Untradeables break on a PvP death no matter what the kept screen claims, so their
+			// repair cost is always part of the loss — a kept slot never actually saves one.
+			if (!tradeableOnDeath((int) it[2]))
+			{
+				continue;
+			}
+			protectedValue += it[1];
+			slots++;
 		}
 		return Math.max(0, total - protectedValue);
 	}
@@ -2009,6 +2088,18 @@ public class PvpProfitTrackerPlugin extends Plugin
 	long keepFloor(int id)
 	{
 		return keepPriorityFloor.getOrDefault(id, 0L);
+	}
+
+	/**
+	 * Whether an item competes for kept slots on a PvP death. Untradeables don't — they break
+	 * or convert (their real loss is the repair cost, which deathValue already models) — and
+	 * the death screen's kept box shows them "protected" anyway, a display the game gets wrong.
+	 * Game-thread only (item cache).
+	 */
+	private boolean tradeableOnDeath(int id)
+	{
+		final ItemComposition c = itemManager.getItemComposition(id);
+		return c != null && c.isTradeable();
 	}
 
 	/** Focused-player gear/stat view for the side panel (EDT-safe snapshot; null = no focus). */
@@ -2553,10 +2644,16 @@ public class PvpProfitTrackerPlugin extends Plugin
 	 */
 	boolean isSkullIconSkulled(int icon)
 	{
-		final Boolean learned = skullIconLearned.get(icon);
-		if (learned != null)
+		// The learned map only ever holds unnamed (BH risk-tier) icons — calibration refuses to
+		// write API-named ones — so named icons must not consult it either: a legacy entry for a
+		// named icon would be unfixable poison (the death screen can never re-teach it).
+		if (!isNamedSkullIcon(icon))
 		{
-			return learned;
+			final Boolean learned = skullIconLearned.get(icon);
+			if (learned != null)
+			{
+				return learned;
+			}
 		}
 		switch (icon)
 		{
@@ -2644,7 +2741,16 @@ public class PvpProfitTrackerPlugin extends Plugin
 		{
 			return true; // too few items to pin the skull state (kept counts are ambiguous)
 		}
-		final int kept = gameKept.size();
+		// Count only tradeables: the box pads itself with untradeables it claims are kept
+		// (they actually break), which would inflate the count and mislearn the skull.
+		int kept = 0;
+		for (final int id : gameKept)
+		{
+			if (tradeableOnDeath(id))
+			{
+				kept++;
+			}
+		}
 		final boolean protect = client.getVarbitValue(VarbitID.PRAYER_PROTECTITEM) == 1;
 		final Boolean skulled;
 		if (kept == (protect ? 4 : 3))
@@ -2683,24 +2789,28 @@ public class PvpProfitTrackerPlugin extends Plugin
 	private void learnKeepPriority(List<Integer> gameKept)
 	{
 		final List<long[]> ranked = rankedCarriedItems();
-		final int slots = keptCount();
-		final Set<Integer> predicted = new HashSet<>();
-		for (int i = 0; i < ranked.size() && i < slots; i++)
+		final Map<Integer, Long> rankById = new HashMap<>();
+		for (final long[] it : ranked)
 		{
-			predicted.add((int) ranked.get(i)[2]);
+			rankById.merge((int) it[2], it[0], Math::max);
 		}
 		long bestLost = 0; // the strongest rank the game passed over — a learned item beats it
 		for (final long[] it : ranked)
 		{
-			if (!gameKept.contains((int) it[2]))
+			if (!gameKept.contains((int) it[2]) && tradeableOnDeath((int) it[2]))
 			{
 				bestLost = Math.max(bestLost, it[0]);
 			}
 		}
+		// One read teaches the whole box: every kept item outranks every passed-over item, so any
+		// kept item ranked at-or-below the best lost one gets its floor raised now. Tradeables
+		// only, both sides — the box displays untradeables as "kept" when they actually break,
+		// and an untradeable was never really passed over for a slot either.
 		boolean changed = false;
 		for (final int id : gameKept)
 		{
-			if (predicted.contains(id))
+			final Long cur = rankById.get(id);
+			if (cur == null || cur > bestLost || !tradeableOnDeath(id))
 			{
 				continue;
 			}
@@ -2979,7 +3089,31 @@ public class PvpProfitTrackerPlugin extends Plugin
 		try
 		{
 			final ItemComposition comp = itemManager.getItemComposition(id);
-			final Long repair = repairCosts.get(comp.getName().toLowerCase());
+			final String name = comp.getName().toLowerCase();
+			Long repair = repairCosts.get(name);
+			if (repair == null)
+			{
+				final String base = name.replaceFirst("\\s*\\((or|cr|t|g|l)\\)$", "");
+				if (!base.equals(name))
+				{
+					// Ornament variants of untradeables ("Fighter torso (or)") break like the
+					// base item — inherit its fee unless the CSV carries an exact variant row.
+					repair = repairCosts.get(base);
+					if (repair == null)
+					{
+						// Ornament variants of TRADEABLE bases ("Helm of neitiznot (or)",
+						// "Dragon boots (cr)") don't break: the base item drops to the killer
+						// and the kit survives, so the loss is the base item's live GE price.
+						for (final ItemPrice p : itemManager.search(base))
+						{
+							if (p.getName().equalsIgnoreCase(base))
+							{
+								return Math.max(0, p.getPrice());
+							}
+						}
+					}
+				}
+			}
 			if (repair != null)
 			{
 				return repair;

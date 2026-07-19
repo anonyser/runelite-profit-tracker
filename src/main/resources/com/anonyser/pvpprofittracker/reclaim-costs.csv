@@ -59,3 +59,23 @@ Shadow ancient sceptre,260962
 Dizana's quiver,270000
 Blessed dizana's quiver,400000
 Dizana's max cape,400000
+# BH ornament variants that BREAK with the base item's Perdu fee (torso kit survives to the
+# gravestone; defender (t) kits are lost). Variants of TRADEABLE bases — Helm of neitiznot (or),
+# Dragon boots (cr) and the other (cr) weapons — are NOT listed here on purpose: they don't break,
+# the base item drops to the killer, and deathValue prices them at the base item's live GE price.
+Fighter torso (or),150000
+Dragon defender (t),240000
+Rune defender (t),35000
+# Culinaromancer's Chest rebuy prices (lost on death, flat rebuy — not a Perdu fee).
+Barrows gloves,130000
+Dragon gloves,130000
+Rune gloves,6500
+Adamant gloves,3250
+Mithril gloves,1950
+Black gloves,1300
+Steel gloves,650
+Iron gloves,325
+Bronze gloves,130
+Hardleather gloves,65
+# Lost on death, flat rebuy from Jack at the Myths' Guild.
+Mythical cape,10000
